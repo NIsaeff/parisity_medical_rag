@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chunk overlap · RAG &amp; AI Agents</title>
+<style>
+  :root{--ink:#1b2330;--muted:#5b6675;--line:#e3e7ec;--bg:#fff;--panel:#f6f8fa;--accent:#2563eb;
+        --a:#fde68a;--a-ink:#854d0e;--b:#bfdbfe;--b-ink:#1e3a8a;--ok:#15803d;--ok-bg:#e7f6ec;--bad:#b91c1c;--bad-bg:#fbe9e9;
+        --dup:#f3e8ff;--code-bg:#f4f6f8;
+        --lane1:#2563eb;--lane2:#d97706;--lane3:#7c3aed;}
+  @media (prefers-color-scheme: dark){
+    :root{--ink:#e6eaf0;--muted:#9aa5b4;--line:#2c3440;--bg:#12161c;--panel:#1a2029;--accent:#6b9bff;
+          --a:#5b4a12;--a-ink:#fde68a;--b:#1e3a66;--b-ink:#bfdbfe;--ok:#4ade80;--ok-bg:#14301f;--bad:#f87171;--bad-bg:#3a1a1a;
+          --dup:#2e2340;--code-bg:#1f2630;--lane1:#6b9bff;--lane2:#fbbf24;--lane3:#c4a1ff;}
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);margin:0;padding:2rem;line-height:1.5}
+  h1{font-size:1.7rem;margin:0 0 .3rem}
+  .lead{color:var(--muted);font-size:1.1rem;max-width:62rem;margin:0 0 1rem}
+  .lead b{color:var(--ink)}
+  code{font-family:ui-monospace,"SF Mono",Menlo,monospace;background:var(--code-bg);padding:.1em .35em;border-radius:4px;font-size:.9em}
+  .controls{display:flex;flex-wrap:wrap;gap:.8rem 1.4rem;align-items:center;margin:0 0 1rem;max-width:72rem}
+  .seg{display:flex;gap:.4rem}
+  .seg button{font:inherit;font-size:.93rem;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:.4rem .85rem;border-radius:999px}
+  .seg button:hover{border-color:var(--accent);color:var(--accent)}
+  .seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  label.ctl{display:flex;align-items:center;gap:.5rem;color:var(--muted);font-size:.95rem}
+  label.ctl b{color:var(--ink);min-width:5.5rem;display:inline-block}
+  input[type=range]{accent-color:var(--accent)}
+  .question{max-width:72rem;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:.8rem 1rem;margin:0 0 1rem}
+  .question .q{font-weight:600;font-size:1.08rem}
+  .question .need{color:var(--muted);font-size:.93rem;margin-top:.25rem}
+  .fa{background:var(--a);color:var(--a-ink);border-radius:4px;padding:0 .25em}
+  .fb{background:var(--b);color:var(--b-ink);border-radius:4px;padding:0 .25em}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.5rem;max-width:72rem}
+  h2{font-size:1rem;margin:0 0 .5rem}
+  .doc{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:.7rem}
+  .lanes{display:flex;gap:4px}
+  .lane{width:6px;position:relative}
+  .bar{position:absolute;left:0;width:6px;border-radius:3px}
+  .sent{padding:.32rem .1rem;font-size:.95rem;border-bottom:1px dashed var(--line)}
+  .sent .n{color:var(--muted);font-size:.8rem;margin-right:.35rem;font-variant-numeric:tabular-nums}
+  .sent.boundary{border-bottom:2px solid var(--bad)}
+  .chunk{border:1px solid var(--line);border-radius:10px;padding:.55rem .75rem;margin-bottom:.55rem;background:var(--panel);font-size:.92rem}
+  .chunk.best{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .chunk .hd{display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem;font-size:.85rem;color:var(--muted)}
+  .chunk .hd .sw{width:10px;height:10px;border-radius:3px}
+  .pill{margin-left:auto;font-size:.75rem;font-weight:600;padding:.1em .55em;border-radius:999px;white-space:nowrap}
+  .p-ok{color:var(--ok);background:var(--ok-bg)}
+  .p-half{color:var(--muted);border:1px solid var(--line)}
+  .dupl{background:var(--dup);border-radius:4px}
+  .llm{max-width:72rem;margin-top:1.2rem;border-radius:12px;padding:.9rem 1.1rem;border:1px solid var(--line)}
+  .llm.ok{background:var(--ok-bg);border-color:var(--ok)}
+  .llm.bad{background:var(--bad-bg);border-color:var(--bad)}
+  .llm h3{margin:0 0 .3rem;font-size:1.02rem}
+  .llm p{margin:.25rem 0}
+  .stats{display:flex;flex-wrap:wrap;gap:.6rem;max-width:72rem;margin-top:1rem}
+  .stat{border:1px solid var(--line);border-radius:10px;padding:.5rem .8rem;background:var(--panel);min-width:9rem}
+  .stat .v{font-size:1.3rem;font-weight:700;font-variant-numeric:tabular-nums}
+  .stat .l{color:var(--muted);font-size:.82rem}
+  .when{display:grid;grid-template-columns:1fr 1fr;gap:1rem;max-width:72rem;margin-top:1.4rem}
+  .when > div{border:1px solid var(--line);border-radius:12px;padding:.9rem 1.1rem;background:var(--panel)}
+  .when h3{margin:0 0 .4rem;font-size:1.02rem}
+  .when ul{margin:0;padding-left:1.1rem;color:var(--muted)}
+  .when li{margin:.3rem 0}
+  .when li b{color:var(--ink)}
+  .legend{color:var(--muted);font-size:.84rem;margin-top:.5rem}
+  @media (max-width:760px){
+    body{padding:1rem}
+    .wrap,.when{grid-template-columns:minmax(0,1fr)}
+  }
+</style>
+</head>
+<body>
+  <h1>Chunk overlap: why repeat yourself?</h1>
+  <p class="lead">
+    Some answers need <b>two neighboring sentences</b>: one names the thing, the next says what happened to it
+    (“started lisinopril” then “two weeks later, a cough”). If a chunk boundary falls <b>between</b> them, no
+    single chunk holds the whole answer. Retrieval returns a chunk that says “a cough” with no drug, or
+    “he fed swine” with no idea who “he” is.
+    <b>Overlap</b> repeats the last few sentences of each chunk at the start of the next, so neighbors can't be
+    separated. <b>Sentence</b> overlap repeats whole sentences, so it never cuts one in half like character overlap can.
+  </p>
+
+  <div class="controls">
+    <div class="seg" id="examples"></div>
+    <label class="ctl">chunk size <b id="sizeV"></b><input type="range" id="size" min="2" max="5" value="3"></label>
+    <label class="ctl">overlap <b id="ovV"></b><input type="range" id="ov" min="0" max="2" value="0"></label>
+  </div>
+
+  <div class="question" id="question"></div>
+
+  <div class="wrap">
+    <div>
+      <h2>The document, with chunk boundaries</h2>
+      <div class="doc">
+        <div class="lanes" id="lanes"></div>
+        <div id="doc"></div>
+      </div>
+      <p class="legend">Each colored bar is one chunk. A <span style="color:var(--bad);font-weight:600">red line</span> marks a hard boundary, where nothing carries across.</p>
+    </div>
+    <div>
+      <h2>The chunks you'd store</h2>
+      <div id="chunks"></div>
+      <p class="legend"><span class="dupl">&nbsp;shaded&nbsp;</span> text is repeated from the previous chunk. That's the overlap.</p>
+    </div>
+  </div>
+
+  <div class="llm" id="llm"></div>
+  <div class="stats" id="stats"></div>
+
+  <div class="when">
+    <div>
+      <h3>Use overlap when…</h3>
+      <ul>
+        <li><b>You slice flowing text by size</b>, such as long reports, transcripts, contracts or discharge summaries. Ideas run across your arbitrary boundaries.</li>
+        <li><b>Sentences lean on the ones before them</b>, through words like “it”, “he”, “this medication” or “the above”.</li>
+        <li><b>Answers span a few sentences.</b> Overlap of 1–2 sentences, about 10–20% of the chunk, covers most of them. It <i>guarantees</i> two facts land together only if they're at most <i>overlap</i> sentences apart.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Skip it when…</h3>
+      <ul>
+        <li><b>Chunks follow natural, self-contained units</b>, such as one clinical note = one vector, one Bible chapter, or one FAQ entry. The author already put the boundaries in the right place.</li>
+        <li><b>Duplicates would crowd your top-K.</b> The same sentence stored twice can come back twice and take up a slot.</li>
+        <li><b>A cheaper fix exists.</b> Prepend context such as <code>Luke 15</code> or <code>Patient: Jane D., 2024-03-02</code> to every chunk, so “he” and “it” have something to point at without duplicating text.</li>
+      </ul>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // Each example: units (sentences/verses), the question, and the two units the
+  // answer needs (a = names the thing, b = says what happened). The Luke text is
+  // real KJV; the clinical note is synthetic.
+  const EXAMPLES = {
+    clinical: {
+      label: 'Clinical note',
+      unit: 'sentence',
+      question: 'What medication is causing the patient’s cough?',
+      a: 2, b: 3, // 0-based indices
+      aLabel: 'names the drug', bLabel: 'the side effect',
+      fail: 'It sees “Two weeks later he developed a persistent dry cough” and has no idea which drug that was. It either guesses or says the record doesn’t say.',
+      win: 'One chunk holds both “started on lisinopril” and “two weeks later… a persistent dry cough”, so the LLM can answer: lisinopril.',
+      units: [
+        'Patient is a 67-year-old male with a history of hypertension.',
+        'Blood pressure was poorly controlled at his last two visits.',
+        'He was started on lisinopril 10 mg daily in March.',
+        'Two weeks later he developed a persistent dry cough.',
+        'He denies fever, chills or shortness of breath.',
+        'Lungs are clear to auscultation; chest X-ray is unremarkable.',
+        'Plan: discontinue the current agent and switch to losartan 50 mg daily.',
+        'Follow up in four weeks to recheck blood pressure.',
+      ],
+    },
+    luke: {
+      label: 'Luke 15 (KJV)',
+      unit: 'verse',
+      question: 'What happened to the son who wasted his inheritance?',
+      a: 2, b: 4,
+      aLabel: 'who wasted it', bLabel: 'what happened to him',
+      fail: 'The chunk says “he went… to feed swine” but never says who “he” is. The verse naming the younger son sits in a different chunk.',
+      win: 'One chunk runs from “the younger son… wasted his substance” to “he sent him into his fields to feed swine”, so the whole story is in one place.',
+      start: 11,
+      units: [
+        'And he said, A certain man had two sons:',
+        'And the younger of them said to his father, Father, give me the portion of goods that falleth to me. And he divided unto them his living.',
+        'And not many days after the younger son gathered all together, and took his journey into a far country, and there wasted his substance with riotous living.',
+        'And when he had spent all, there arose a mighty famine in that land; and he began to be in want.',
+        'And he went and joined himself to a citizen of that country; and he sent him into his fields to feed swine.',
+        'And he would fain have filled his belly with the husks that the swine did eat: and no man gave unto him.',
+        'And when he came to himself, he said, How many hired servants of my father’s have bread enough and to spare, and I perish with hunger!',
+        'I will arise and go to my father, and will say unto him, Father, I have sinned against heaven, and before thee,',
+      ],
+    },
+  };
+  const LANES = ['var(--lane1)', 'var(--lane2)', 'var(--lane3)'];
+
+  let current = 'clinical';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+  Object.entries(EXAMPLES).forEach(([key, ex]) => {
+    const b = document.createElement('button');
+    b.textContent = ex.label;
+    b.onclick = () => { current = key; render(); };
+    $('examples').appendChild(b);
+  });
+  $('size').oninput = render;
+  $('ov').oninput = render;
+
+  // Sliding window over units: step = size - overlap. Same idea as character
+  // overlap, but the unit is a whole sentence, so nothing gets cut mid-thought.
+  function makeChunks(n, size, overlap) {
+    const step = size - overlap;
+    const chunks = [];
+    for (let start = 0; ; start += step) {
+      const end = Math.min(start + size, n); // exclusive
+      chunks.push({ start, end });
+      if (end >= n) break;
+    }
+    return chunks;
+  }
+
+  function render() {
+    const ex = EXAMPLES[current];
+    const size = +$('size').value;
+    // overlap must stay below size or the window never moves
+    $('ov').max = Math.min(2, size - 1);
+    const overlap = Math.min(+$('ov').value, size - 1);
+    $('ov').value = overlap;
+    const unit = ex.unit;
+    $('sizeV').textContent = `${size} ${unit}s`;
+    $('ovV').textContent = overlap === 0 ? 'none' : `${overlap} ${unit}${overlap > 1 ? 's' : ''}`;
+    [...$('examples').children].forEach((b, i) => b.classList.toggle('on', Object.keys(EXAMPLES)[i] === current));
+
+    const num = (i) => (ex.start ? `${ex.start + i}` : `${i + 1}`);
+    const mark = (i, text) =>
+      i === ex.a ? `<span class="fa">${esc(text)}</span>` : i === ex.b ? `<span class="fb">${esc(text)}</span>` : esc(text);
+
+    $('question').innerHTML =
+      `<div class="q">Q: ${esc(ex.question)}</div>` +
+      `<div class="need">The answer needs ${unit} <span class="fa">${num(ex.a)}</span> (${ex.aLabel}) <b>and</b> ` +
+      `${unit} <span class="fb">${num(ex.b)}</span> (${ex.bLabel}), which are ${ex.b - ex.a} ${unit}${ex.b - ex.a > 1 ? 's' : ''} apart.</div>`;
+
+    const chunks = makeChunks(ex.units.length, size, overlap);
+    chunks.forEach((c) => {
+      c.hasA = ex.a >= c.start && ex.a < c.end;
+      c.hasB = ex.b >= c.start && ex.b < c.end;
+    });
+    // "Retrieval" here = the chunk holding the most of what the question needs;
+    // ties go to the one with the side effect / outcome, which the query wording matches
+    const best = chunks.find((c) => c.hasA && c.hasB) || chunks.find((c) => c.hasB) || chunks[0];
+
+    // Left: document with lanes (chunk bars) and hard boundaries
+    const unitH = []; // measured after render
+    $('doc').innerHTML = ex.units.map((t, i) => {
+      // a hard boundary sits after unit i if some chunk ends at i+1 and no chunk spans i→i+1
+      const spans = chunks.some((c) => c.start <= i && c.end > i + 1);
+      const boundary = i < ex.units.length - 1 && !spans;
+      return `<div class="sent${boundary ? ' boundary' : ''}"><span class="n">${num(i)}</span>${mark(i, t)}</div>`;
+    }).join('');
+    const rows = [...$('doc').children];
+    let y = 0;
+    rows.forEach((r) => { unitH.push([y, r.offsetHeight]); y += r.offsetHeight; });
+    const laneCount = overlap === 0 ? 1 : Math.min(3, Math.ceil(size / (size - overlap)));
+    $('lanes').innerHTML = Array.from({ length: laneCount }, (_, l) =>
+      `<div class="lane" style="height:${y}px">` +
+      chunks.map((c, k) => k % laneCount !== l ? '' : (() => {
+        const top = unitH[c.start][0] + 3;
+        const bottom = unitH[c.end - 1][0] + unitH[c.end - 1][1] - 3;
+        return `<div class="bar" style="top:${top}px;height:${bottom - top}px;background:${LANES[k % 3]}"></div>`;
+      })()).join('') +
+      `</div>`).join('');
+
+    // Right: chunk cards
+    $('chunks').innerHTML = chunks.map((c, k) => {
+      const prev = chunks[k - 1];
+      const body = ex.units.slice(c.start, c.end).map((t, j) => {
+        const i = c.start + j;
+        const repeated = prev && i < prev.end;
+        const html = mark(i, t);
+        return repeated ? `<span class="dupl">${html}</span>` : html;
+      }).join(' ');
+      const pill = c.hasA && c.hasB
+        ? '<span class="pill p-ok">✓ whole answer</span>'
+        : c.hasA ? `<span class="pill p-half">only ${ex.aLabel}</span>`
+        : c.hasB ? `<span class="pill p-half">only ${ex.bLabel}</span>` : '';
+      return `<div class="chunk${c === best ? ' best' : ''}"><div class="hd"><span class="sw" style="background:${LANES[k % 3]}"></span>` +
+        `chunk ${k + 1} · ${unit}s ${num(c.start)}–${num(c.end - 1)}${c === best ? ' · <b style="color:var(--accent)">retrieved</b>' : ''}${pill}</div>${body}</div>`;
+    }).join('');
+
+    // What the LLM sees
+    const ok = best.hasA && best.hasB;
+    $('llm').className = 'llm ' + (ok ? 'ok' : 'bad');
+    $('llm').innerHTML = ok
+      ? `<h3>✓ The retrieved chunk can answer the question</h3><p>${ex.win}</p>`
+      : `<h3>✗ The retrieved chunk can’t answer the question</h3><p>${ex.fail}</p>` +
+        `<p style="color:var(--muted)">The boundary landed between ${unit} ${num(ex.a)} and ${unit} ${num(ex.b)}. ` +
+        (size < ex.b - ex.a + 1
+          ? `A ${size}-${unit} chunk is too small to hold both, because they span ${ex.b - ex.a + 1} ${unit}s. No overlap can fix that, so use bigger chunks.`
+          : overlap === 0
+          ? 'Try overlap = 1.'
+          : `The window still lands badly. Overlap only <i>guarantees</i> facts up to ${overlap} ${unit}${overlap > 1 ? 's' : ''} apart, and these are ${ex.b - ex.a} apart.`) + `</p>`;
+
+    // Cost
+    const stored = chunks.reduce((s, c) => s + (c.end - c.start), 0);
+    const extra = stored - ex.units.length;
+    $('stats').innerHTML = [
+      [chunks.length, 'chunks to embed + store'],
+      [`${stored} / ${ex.units.length}`, `${unit}s stored / in the document`],
+      [`+${Math.round((100 * extra) / ex.units.length)}%`, 'storage + embedding cost from overlap'],
+      [chunks.filter((c) => c.hasA && c.hasB).length, 'chunks holding the whole answer'],
+    ].map(([v, l]) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+  }
+
+  render();
+  window.addEventListener('resize', render);
+})();
+</script>
+</body>
+</html>
