@@ -101,7 +101,10 @@ export interface SearchResult {
 export async function upsertChunks(chunks: MedicalChunk[]): Promise<number> {
 	const index = pinecone.Index(INDEX_NAME);
 
-	const batchSize = 100;
+	// Pinecone caps a request at 2MB. 1536 floats ≈ 25KB of JSON per vector plus
+	// the note text, so 100 per batch overshoots; the server hangs up mid-write
+	// and it surfaces as EPIPE / "fetch failed" on every retry.
+	const batchSize = 40;
 	let totalUpserted = 0;
 
 	for (let i = 0; i < chunks.length; i += batchSize) {

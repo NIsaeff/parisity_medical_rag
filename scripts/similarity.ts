@@ -30,24 +30,12 @@ function cosine(a: number[], b: number[]): number {
 }
 
 async function main() {
-	const query = 'best language to learn to code for backend development';
+	const query = 'the worst date you could go on';
 	const candidates = [
-		'typescript sucks but it is useful and powerful',
-		'javascript is a pain in the ass',
-		'python is a great language',
-		'java is a pain in the ass',
-		'ruby is a great language',
-		'php is a pain in the ass',
-		'c# is a great language',
-		'i rode a pony today and it was fun',
-		'i went to the park and played with my dog',
-		'i went to the gym and lifted weights',
-		'i went to the store and bought some groceries',
-		'i went to the movies and watched a movie',
-		'i went to the beach and played in the sand',
-		'i went to the mountains and hiked',
-		'i went to the city and walked around',
-		'i went to the country and farmed',
+		'a date with your ex',
+		'going down under the bridge to cook hot dogs',
+		'ai ROBOT DATE',
+		'hot dog',
 	];
 
 	// One API call embeds them all: [query, ...candidates]
