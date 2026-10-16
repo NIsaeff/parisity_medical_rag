@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rerank Before/After · KJV</title>
+<!-- Template for scripts/bible/teach-rerank.ts — the script injects real results
+     and writes data/bible/rerank-demo.html. Open THAT file, not this one. -->
+<style>
+  :root{--ink:#1b2330;--muted:#5b6675;--line:#e3e7ec;--bg:#fff;--panel:#f6f8fa;--accent:#2563eb;
+        --up:#15803d;--up-bg:#e7f6ec;--down:#b91c1c;--flat:#a8b3c2;--keep:#eef4ff;--star:#b45309;--code-bg:#f4f6f8}
+  @media (prefers-color-scheme: dark){
+    :root{--ink:#e6eaf0;--muted:#9aa5b4;--line:#2c3440;--bg:#12161c;--panel:#1a2029;--accent:#6b9bff;
+          --up:#4ade80;--up-bg:#14301f;--down:#f87171;--flat:#4b5563;--keep:#18233a;--star:#fbbf24;--code-bg:#1f2630}
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);margin:0;padding:2rem;line-height:1.5}
+  h1{font-size:1.7rem;margin:0 0 .3rem}
+  .lead{color:var(--muted);font-size:1.08rem;max-width:62rem;margin:0 0 1rem}
+  .meta{color:var(--muted);font-size:.88rem;margin:0 0 1.2rem}
+  code{font-family:ui-monospace,"SF Mono",Menlo,monospace;background:var(--code-bg);padding:.1em .35em;border-radius:4px;font-size:.9em}
+  .tabs{display:flex;flex-wrap:wrap;gap:.5rem;margin:0 0 1rem}
+  .tabs button{font:inherit;font-size:.9rem;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+               padding:.4rem .8rem;border-radius:999px;max-width:22rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tabs button:hover{border-color:var(--accent);color:var(--accent)}
+  .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .q{font-size:1.25rem;font-weight:600;margin:.2rem 0 .2rem}
+  .expect{color:var(--muted);margin:0 0 .6rem;max-width:62rem}
+  .lesson{color:var(--ink);font-size:.95rem}
+  .callout{border-left:4px solid var(--up);background:var(--up-bg);padding:.6rem .9rem;border-radius:6px;margin:0 0 1rem;max-width:62rem}
+  .callout.warn{border-color:var(--down);background:transparent;border:1px solid var(--down);border-left-width:4px}
+  .stage{display:grid;grid-template-columns:minmax(0,1fr) 120px minmax(0,1fr);max-width:1050px;position:relative}
+  .col h2{font-size:1rem;margin:0}
+  .col .sub{color:var(--muted);font-size:.85rem;margin:0 0 .6rem}
+  .rows{position:relative}
+  .row{height:34px;margin-bottom:4px;display:flex;align-items:center;gap:.5rem;padding:0 .6rem;border:1px solid var(--line);
+       border-radius:8px;background:var(--panel);cursor:pointer;font-size:.92rem;white-space:nowrap}
+  .row:hover,.row.sel{border-color:var(--accent)}
+  .row.kept{background:var(--keep)}
+  .row.dim{opacity:.45}
+  .row .rk{width:1.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+  .row .ref{overflow:hidden;text-overflow:ellipsis}
+  .row .sc{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-size:.85rem}
+  .star{color:var(--star);font-weight:700}
+  .badge{font-size:.72rem;font-weight:600;padding:.05em .45em;border-radius:999px}
+  .b-up{color:var(--up);background:var(--up-bg)}
+  .b-down{color:var(--down)}
+  .cut{font-size:.75rem;color:var(--muted)}
+  svg.links{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+  .keepline{position:absolute;left:0;right:0;border-top:2px dashed var(--accent);pointer-events:none}
+  .keeplabel{position:absolute;left:100%;margin-left:6px;transform:translateY(-50%);white-space:nowrap;font-size:.75rem;color:var(--accent);font-weight:600;background:var(--bg);padding:0 .3rem}
+  .detail{max-width:1050px;margin-top:1.2rem;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:1rem 1.2rem}
+  .detail h3{margin:0 0 .3rem;font-size:1.05rem}
+  .detail .nums{color:var(--muted);font-size:.88rem;margin:0 0 .6rem}
+  .detail pre{white-space:pre-wrap;font-family:inherit;font-size:.92rem;margin:0;max-height:16rem;overflow:auto}
+  .detail .seen{background:var(--keep)}
+  .why{max-width:1050px;margin-top:1.2rem;color:var(--muted);font-size:.95rem}
+  .why b{color:var(--ink)}
+  @media (max-width:700px){
+    body{padding:1rem}
+    .stage{grid-template-columns:minmax(0,1fr) 40px minmax(0,1fr)}
+    .row .sc,.badge,.cut{display:none}
+  }
+</style>
+</head>
+<body>
+  <h1>Search results without and with reranking</h1>
+  <p class="lead">
+    Real results from the King James Bible, <b>chunked one chapter per vector</b>. On the left is plain
+    <b>cosine search</b>, where the query and each chapter were embedded <i>separately</i>. On the right, the
+    <b>same candidates</b> are rescored by a reranker that reads the query and each chapter <i>together</i>.
+    Only the rows above the dashed line would reach the LLM.
+  </p>
+  <p class="meta" id="meta"></p>
+
+  <div class="tabs" id="tabs"></div>
+  <div class="q" id="q"></div>
+  <p class="expect" id="expect"></p>
+  <div id="callout"></div>
+
+  <div class="stage" id="stage">
+    <div class="col">
+      <h2>Without rerank: cosine similarity</h2>
+      <p class="sub">Fast, approximate, one vector per chapter</p>
+      <div class="rows" id="left"></div>
+    </div>
+    <div></div>
+    <div class="col">
+      <h2>With rerank: <span id="model"></span></h2>
+      <p class="sub">The same candidates, re-read together with the query</p>
+      <div class="rows" id="right"></div>
+    </div>
+    <svg class="links" id="links"></svg>
+  </div>
+
+  <div class="detail" id="detail"></div>
+
+  <p class="why">
+    <b>Why fetch 25 to keep 5?</b> A reranker can only reorder what retrieval already found. Fetch too few and
+    the right chapter never gets a vote. <b>Why do some rows say ✂?</b> The reranker reads about 1,024 tokens of
+    query plus chapter, so a long chapter is judged on its opening only. That's the cost of big chunks.
+  </p>
+
+<script>
+const DATA = /*__DEMO_DATA__*/null;
+const ROW = 38; // row height + gap, px
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+if (!DATA) {
+  document.body.innerHTML = '<p style="padding:2rem">This is the template. Run <code>npm run bible:teach</code> and open <code>data/bible/rerank-demo.html</code>.</p>';
+} else {
+  const { meta, results } = DATA;
+  $('model').textContent = meta.model;
+  $('meta').innerHTML = `Qdrant collection <code>${esc(meta.collection)}</code> · ${meta.chunkCount.toLocaleString()} chapter chunks · ` +
+    `fetch ${meta.fetchCount} → keep ${meta.keep} · generated ${new Date(meta.generatedAt).toLocaleString()}`;
+
+  let current = 0;
+  let selected = null;
+
+  results.forEach((r, i) => {
+    const b = document.createElement('button');
+    b.textContent = r.query;
+    b.title = r.query;
+    b.onclick = () => { current = i; selected = null; render(); };
+    $('tabs').appendChild(b);
+  });
+
+  function rowHtml(c, side, keep, expect) {
+    const rank = side === 'left' ? c.cosineRank : c.rerankRank;
+    const score = side === 'left' ? c.cosineScore : c.rerankScore;
+    const star = c.reference === expect ? '<span class="star" title="the chapter we expected">★</span>' : '';
+    let badge = '';
+    if (side === 'right') {
+      const d = c.cosineRank - c.rerankRank;
+      if (d > 0) badge = `<span class="badge b-up">▲ ${d}</span>`;
+      if (d < 0) badge = `<span class="badge b-down">▼ ${-d}</span>`;
+    }
+    const cut = c.truncated ? '<span class="cut" title="longer than the reranker reads">✂</span>' : '';
+    const cls = ['row', rank <= keep ? 'kept' : '', selected === c.id ? 'sel' : '', selected && selected !== c.id ? 'dim' : ''].join(' ');
+    return `<div class="${cls}" data-id="${esc(c.id)}"><span class="rk">#${rank}</span>${star}` +
+      `<span class="ref">${esc(c.reference)}</span>${cut}${badge}<span class="sc">${score.toFixed(3)}</span></div>`;
+  }
+
+  function keepLine(container, keep, label = true) {
+    const y = keep * ROW - 2;
+    container.insertAdjacentHTML('beforeend',
+      `<div class="keepline" style="top:${y}px">${label ? `<span class="keeplabel">top ${keep} → LLM</span>` : ''}</div>`);
+  }
+
+  function render() {
+    const r = results[current];
+    const keep = meta.keep;
+    [...$('tabs').children].forEach((b, i) => b.classList.toggle('on', i === current));
+    $('q').textContent = `“${r.query}”`;
+    $('expect').innerHTML = (r.expect ? `Expected chapter: <span class="star">★</span> <b>${esc(r.expect)}</b>` : '') +
+      (r.lesson ? `<br><span class="lesson">${esc(r.lesson)}</span>` : '');
+
+    const reranked = r.candidates.filter((c) => c.rerankRank !== null).sort((a, b) => a.rerankRank - b.rerankRank);
+    // Feature the expected chapter if the reranker rescued it, else the deepest rescue
+    const rescued = reranked.filter((c) => c.rerankRank <= keep && c.cosineRank > keep);
+    const promoted = rescued.find((c) => c.reference === r.expect) || rescued.sort((a, b) => b.cosineRank - a.cosineRank)[0];
+    const exp = r.candidates.find((c) => c.reference === r.expect);
+    let callout = '';
+    if (r.rerankError) callout = `<div class="callout warn">Rerank failed (${esc(r.rerankError)}), so only cosine order is shown.</div>`;
+    else if (promoted) callout = `<div class="callout">The reranker pulled <b>${esc(promoted.reference)}</b> up from <b>#${promoted.cosineRank}</b> to <b>#${promoted.rerankRank}</b>. Cosine search alone would never have shown it to the LLM.</div>`;
+    else if (r.expect && !exp) callout = `<div class="callout warn"><b>${esc(r.expect)}</b> wasn't in the top ${r.candidates.length} cosine candidates. Reranking can't rescue what retrieval never fetched.</div>`;
+    else callout = `<div class="callout">Nothing outside the cosine top ${keep} made it in. The reranker only reshuffled the top. That happens too, and it's worth saying out loud.</div>`;
+    $('callout').innerHTML = callout;
+
+    $('left').innerHTML = r.candidates.map((c) => rowHtml(c, 'left', keep, r.expect)).join('');
+    $('right').innerHTML = reranked.map((c) => rowHtml(c, 'right', keep, r.expect)).join('');
+    keepLine($('left'), keep);
+    if (reranked.length) keepLine($('right'), keep, false);
+
+    document.querySelectorAll('.row').forEach((el) => {
+      el.onclick = () => { selected = selected === el.dataset.id ? null : el.dataset.id; render(); };
+    });
+    drawLinks(r, keep);
+    renderDetail(r);
+  }
+
+  function drawLinks(r, keep) {
+    const svg = $('links');
+    const stage = $('stage').getBoundingClientRect();
+    const left = $('left').getBoundingClientRect();
+    const right = $('right').getBoundingClientRect();
+    const x1 = left.right - stage.left;
+    const x2 = right.left - stage.left;
+    const top = left.top - stage.top;
+    const css = getComputedStyle(document.documentElement);
+    let paths = '';
+    for (const c of r.candidates) {
+      if (c.rerankRank === null) continue;
+      const y1 = top + (c.cosineRank - 1) * ROW + 17;
+      const y2 = top + (c.rerankRank - 1) * ROW + 17;
+      const intoKeep = c.rerankRank <= keep && c.cosineRank > keep;
+      const outOfKeep = c.cosineRank <= keep && c.rerankRank > keep;
+      const isSel = selected === c.id;
+      const color = intoKeep ? css.getPropertyValue('--up') : outOfKeep ? css.getPropertyValue('--down') : css.getPropertyValue('--flat');
+      const w = intoKeep || outOfKeep || isSel ? 2.5 : 1;
+      const op = selected && !isSel ? 0.12 : intoKeep || outOfKeep ? 1 : 0.6;
+      const mx = (x1 + x2) / 2;
+      paths += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color.trim()}" stroke-width="${w}" opacity="${op}"/>`;
+    }
+    svg.innerHTML = paths;
+  }
+
+  function renderDetail(r) {
+    const c = r.candidates.find((x) => x.id === selected) ||
+      r.candidates.filter((x) => x.rerankRank !== null).sort((a, b) => a.rerankRank - b.rerankRank)[0] ||
+      r.candidates[0];
+    if (!c) { $('detail').innerHTML = ''; return; }
+    const seen = c.text.slice(0, meta.rerankWindowChars);
+    const unseen = c.text.slice(meta.rerankWindowChars);
+    $('detail').innerHTML = `<h3>${esc(c.reference)}${selected ? '' : ` <span style="color:var(--muted);font-weight:400">(${c.rerankRank !== null ? 'reranker’s' : 'cosine'} #1, click any row to inspect it)</span>`}</h3>` +
+      `<p class="nums">cosine #${c.cosineRank} (${c.cosineScore.toFixed(3)})` +
+      (c.rerankRank !== null ? ` → reranked #${c.rerankRank} (${c.rerankScore.toFixed(3)})` : '') +
+      ` · ${c.text.length.toLocaleString()} chars${c.truncated ? ' · ✂ only the shaded part fit in the reranker’s window' : ''}</p>` +
+      `<pre><span class="${c.truncated ? 'seen' : ''}">${esc(seen)}</span>${esc(unseen)}</pre>`;
+  }
+
+  window.addEventListener('resize', () => drawLinks(results[current], meta.keep));
+  render();
+}
+</script>
+</body>
+</html>
