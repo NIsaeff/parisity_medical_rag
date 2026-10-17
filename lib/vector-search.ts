@@ -21,7 +21,7 @@ export type VectorSearchOptions = {
 export async function searchClinicalNotes(
 	query: string,
 	options: VectorSearchOptions = {},
-): Promise<any> {
+): Promise<string> {
 	// query -> string[]
 	const embedding = await createEmbedding(query);
 	// search pinecone
@@ -38,7 +38,32 @@ export async function searchClinicalNotes(
 		metadata: match.metadata,
 	}));
 
+	// filter -> terrible matches
+
+	// cosine similarity agains the query and the doc
+
 	console.log(JSON.stringify(matchesWithScores, null, 2));
 
-	return matchesWithScores;
+	// filter out scores below 0.3
+	const filteredMatches = matchesWithScores.filter(
+		(match) => match?.score && match.score > 0.3,
+	);
+
+	const docs: string[] = filteredMatches.map(
+		(match) =>
+			`note: ${match.metadata?.content} \n\n metadata: ${JSON.stringify(match.metadata)}`,
+	);
+
+	const reranked = await pinecone.inference.rerank({
+		model: 'bge-reranker-v2-m3',
+		query: query, //text
+		documents: docs, //text
+		topN: 5,
+	});
+
+	// scores against the query and the doc
+
+	console.log(JSON.stringify(reranked.data, null, 2));
+
+	return reranked.data.map((result) => result.document?.text).join('\n');
 }
