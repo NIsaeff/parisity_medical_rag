@@ -13,7 +13,8 @@
 		"db:studio": "prisma studio",
 		"vectorize": "tsx scripts/vectorize.ts",
 		"similarity": "tsx scripts/similarity.ts",
-		"bible:fetch": "tsx scripts/bible/fetch.ts"
+		"bible:fetch": "tsx scripts/bible/fetch.ts",
+		"bible:teach": "tsx scripts/bible/teach-rerank.ts"
 	},
 	"dependencies": {
 		"@ai-sdk/openai": "^4.0.91",

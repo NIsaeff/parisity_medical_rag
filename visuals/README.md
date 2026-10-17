@@ -9,6 +9,7 @@ Self-contained, single-file HTML explainers for the core retrieval concepts. No 
 | `vector-search.html` | Embeddings + cosine similarity | Drag a query around meaning-space; watch notes re-rank by angle. Shows why cosine ignores length. |
 | `reranking.html` | Two-stage retrieval (bi-encoder → cross-encoder) | Watch a negated / surface-similar note that vector search ranks #1 get demoted once a re-ranker reads query + note together. |
 | `chunking.html` | Fixed-size vs structure-aware chunking (KJV Bible) | Flip between fixed-size slicing (splits verses, crosses book boundaries) and verse-packing. Reinforces: **we don't chunk clinical notes — one note = one vector — but the Bible must be chunked.** |
+| `overlap.html` | Sentence overlap between chunks | Slide chunk size + overlap on a clinical note or Luke 15 and watch a two-sentence answer split across chunks, then reunite. Shows the storage cost and when to skip overlap (natural units like one note or one chapter). |
 | `hybrid-search.html` | Keyword (BM25) + vector + RRF | Switch queries and see keyword win on exact drug codes, vector win on synonyms, and fusion get both. |
 
 ## Running them
