@@ -27,7 +27,7 @@
 		"@qdrant/js-client-rest": "1.19.0",
 		"ai": "^7.0.135",
 		"langsmith": "^0.10.9",
-		"next": "^16.4.0",
+		"next": "^16.4.2",
 		"openai": "^7.30.1",
 		"react": "^19.3.0",
 		"react-dom": "^19.3.0",
