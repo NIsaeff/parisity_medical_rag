@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent anatomy · RAG &amp; AI Agents</title>
+<style>
+  :root{--ink:#1b2330;--muted:#5b6675;--line:#e3e7ec;--bg:#fff;--panel:#f6f8fa;--accent:#2563eb;--code-bg:#f4f6f8;
+        --sys:#2563eb;--sys-bg:#e3ecfd;--ctx:#15803d;--ctx-bg:#e2f4e8;--mod:#b45309;--mod-bg:#fdf0dc;
+        --out:#7c3aed;--out-bg:#efe7fd;--his:#be185d;--his-bg:#fce4ef;--empty:#9aa5b4;}
+  @media (prefers-color-scheme: dark){
+    :root{--ink:#e6eaf0;--muted:#9aa5b4;--line:#2c3440;--bg:#12161c;--panel:#1a2029;--accent:#6b9bff;--code-bg:#161b22;
+          --sys:#7aa7ff;--sys-bg:#1b2a47;--ctx:#4ade80;--ctx-bg:#15301f;--mod:#fbbf24;--mod-bg:#3a2c10;
+          --out:#c4a1ff;--out-bg:#2b2142;--his:#f472b6;--his-bg:#3a1a2b;--empty:#5b6675;}
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);margin:0;padding:2rem;line-height:1.5}
+  h1{font-size:1.7rem;margin:0 0 .3rem}
+  .lead{color:var(--muted);font-size:1.1rem;max-width:62rem;margin:0 0 1.1rem}
+  .lead b{color:var(--ink)}
+  code{font-family:ui-monospace,"SF Mono",Menlo,monospace;background:var(--code-bg);padding:.1em .35em;border-radius:4px;font-size:.9em}
+  .seg{display:flex;flex-wrap:wrap;gap:.4rem;margin:0 0 1.1rem}
+  .seg button{font:inherit;font-size:.93rem;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:.4rem .85rem;border-radius:999px}
+  .seg button:hover{border-color:var(--accent);color:var(--accent)}
+  .seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .role{max-width:76rem;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:.7rem 1rem;margin:0 0 1rem}
+  .role b{font-size:1.05rem}
+  .role span{color:var(--muted)}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:1.5rem;max-width:76rem}
+  .slots{display:flex;flex-direction:column;gap:.6rem}
+  .slot{border:1px solid var(--line);border-left:6px solid var(--c);border-radius:10px;padding:.6rem .85rem;background:var(--panel);cursor:pointer;transition:background .15s}
+  .slot:hover,.slot.hl{background:var(--cb)}
+  .slot .k{display:flex;align-items:baseline;gap:.5rem}
+  .slot .k b{color:var(--c)}
+  .slot .k small{color:var(--muted)}
+  .slot .v{margin-top:.2rem;font-size:.95rem}
+  .slot.none{border-left-color:var(--empty);opacity:.7}
+  .slot.none .k b{color:var(--empty)}
+  .slot.none .v{color:var(--muted);font-style:italic}
+  pre{margin:0;background:var(--code-bg);border:1px solid var(--line);border-radius:12px;padding:1rem;overflow-x:auto;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.84rem;line-height:1.55}
+  pre .p{border-radius:4px;padding:0 .15em;transition:background .15s,box-shadow .15s}
+  pre .p.hl{background:var(--cb);box-shadow:0 0 0 1px var(--c)}
+  pre .cm{color:var(--muted)}
+  .file{color:var(--muted);font-size:.85rem;margin:0 0 .35rem}
+  .p-sys,.s-sys{--c:var(--sys);--cb:var(--sys-bg)}
+  .p-ctx,.s-ctx{--c:var(--ctx);--cb:var(--ctx-bg)}
+  .p-mod,.s-mod{--c:var(--mod);--cb:var(--mod-bg)}
+  .p-out,.s-out{--c:var(--out);--cb:var(--out-bg)}
+  .p-his,.s-his{--c:var(--his);--cb:var(--his-bg)}
+  .take{max-width:76rem;margin-top:1.4rem;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}
+  .take > div{border:1px solid var(--line);border-radius:12px;padding:.85rem 1.05rem;background:var(--panel)}
+  .take h3{margin:0 0 .3rem;font-size:1rem}
+  .take p{margin:0;color:var(--muted);font-size:.93rem}
+  .take p b{color:var(--ink)}
+  @media (max-width:860px){
+    body{padding:1rem}
+    .wrap,.take{grid-template-columns:minmax(0,1fr)}
+  }
+</style>
+</head>
+<body>
+  <h1>Anatomy of an agent</h1>
+  <p class="lead">
+    An agent is <b>one API call with five slots filled in</b>. That's it. Our app has four of them, and they all share
+    the same skeleton; what changes is what goes in each slot. Pick an agent, then hover a slot to find it in the code.
+  </p>
+
+  <div class="seg" id="tabs"></div>
+  <div class="role" id="role"></div>
+
+  <div class="wrap">
+    <div class="slots" id="slots"></div>
+    <div>
+      <p class="file" id="file"></p>
+      <pre id="code"></pre>
+    </div>
+  </div>
+
+  <div class="take">
+    <div>
+      <h3>Same skeleton, different jobs</h3>
+      <p>Every agent answers the same five questions. When one misbehaves, <b>check the slots one at a time</b> instead of rewriting the whole prompt.</p>
+    </div>
+    <div>
+      <h3>Structured out = code can act on it</h3>
+      <p>The selector and SQL agent return a <b>Zod-checked object</b> your code branches on. Only the aggregator returns free text, because only a human reads it.</p>
+    </div>
+    <div>
+      <h3>The model remembers nothing</h3>
+      <p>“List them” means nothing on its own. <b>History is a slot you fill</b> on every call, or the follow-up question fails.</p>
+    </div>
+  </div>
+
+<script>
+const SLOTS = [
+  { id: 'sys', name: 'System prompt', q: 'What am I doing here?' },
+  { id: 'ctx', name: 'Context', q: 'What do I need to know to do it?' },
+  { id: 'mod', name: 'Model + settings', q: 'Which model, how creative?' },
+  { id: 'out', name: 'Structured output', q: 'What shape do I hand back?' },
+  { id: 'his', name: 'History', q: 'What was already said?' },
+];
+
+// Code uses [[part|text]] markers; everything else is shown as-is.
+const AGENTS = [
+  {
+    key: 'selector', label: 'Selector',
+    role: ['Routes the question.', 'Does it need the database, the notes, both, scheduling, or nothing at all?'],
+    file: 'lib/agents/selector.ts',
+    slots: {
+      sys: 'Classify the question. Never answer it.',
+      ctx: 'Just the question, plus one line on what each source holds (SQL = facts and counts, notes = what was written).',
+      mod: 'gpt-4o-mini, temperature 0. Routing should be cheap, fast and boring.',
+      out: 'Plan { useSql, useRag, useScheduler, needsSearch, semanticQuery }',
+      his: 'Last 5 messages, so “what about her meds?” still routes to SQL.',
+    },
+    code: `const Plan = [[out|z.object({
+  useSql: z.boolean(),
+  useRag: z.boolean(),
+  useScheduler: z.boolean(),
+  needsSearch: z.boolean(),
+  semanticQuery: z.string(),
+})]];
+
+const res = await openai.responses.parse({
+  [[mod|model: 'gpt-4o-mini',]]
+  input: [
+    { role: 'system', content: [[sys|ROUTE_PROMPT]] },
+    [[his|...history.slice(-5),]]
+    { role: 'user', content: [[ctx|query]] },
+  ],
+  [[mod|temperature: 0,]]
+  text: { format: [[out|zodTextFormat(Plan, 'plan')]] },
+});
+return Plan.parse(res.output_parsed);`,
+  },
+  {
+    key: 'sql', label: 'SQL agent',
+    role: ['Writes and runs one read-only query.', 'Text-to-SQL: the model writes it, the database role keeps it safe.'],
+    file: 'lib/agents/sql.ts',
+    slots: {
+      sys: 'Write ONE Postgres SELECT. Quote camelCase columns.',
+      ctx: 'The schema AND real distinct values (“Smokes tobacco daily”, “Myocardial infarction”). The schema says a column exists, not what’s in it.',
+      mod: 'gpt-4o, temperature 0. Wrong SQL is worse than slow SQL.',
+      out: '{ sql, explanation }, then checked by assertReadOnly before it runs.',
+      his: 'Last 5 messages, so “now exclude the deceased” edits the last query.',
+    },
+    code: `const Query = [[out|z.object({
+  sql: z.string(),
+  explanation: z.string(),
+})]];
+
+const res = await openai.responses.parse({
+  [[mod|model: 'gpt-4o',]]
+  input: [
+    { role: 'system', content: [[sys|SQL_RULES]] + [[ctx|schema + groundingValues]] },
+    [[his|...history.slice(-5),]]
+    { role: 'user', content: query },
+  ],
+  [[mod|temperature: 0,]]
+  text: { format: [[out|zodTextFormat(Query, 'query')]] },
+});
+const { sql } = Query.parse(res.output_parsed);
+assertReadOnly(sql);          <span class="cm">// the validator explains…</span>
+return render(await db.query(sql)); <span class="cm">// …the student_ro role enforces</span>`,
+  },
+  {
+    key: 'rag', label: 'RAG agent',
+    role: ['Finds the notes that mean the same thing.', 'Barely an agent: no chat model, no prompt. Embed, search, rerank, label.'],
+    file: 'lib/agents/rag.ts',
+    slots: {
+      sys: null,
+      ctx: 'The semantic query the selector wrote, plus an optional metadata filter (gender, age…).',
+      mod: 'text-embedding-3-small to embed, a reranker to reorder. Neither one writes text.',
+      out: 'Plain text: each note labeled with whose it is, so the aggregator can’t mix patients up.',
+      his: null,
+    },
+    code: `const vector = await [[mod|createEmbedding]]([[ctx|semanticQuery]]);
+
+const { matches } = await index.query({
+  vector,
+  topK: 25,
+  [[ctx|filter,]]                 <span class="cm">// your week 2 homework</span>
+  includeMetadata: true,
+});
+
+const top = await [[mod|rerank]]([[ctx|semanticQuery]], matches, { topN: 5 });
+
+<span class="cm">// no system prompt, no history: this is a pipeline, not a conversation</span>
+return [[out|top.map((m) =>
+  \`<note patient="\${m.metadata.patientId}">\${m.content}</note>\`
+).join('\\n')]];`,
+  },
+  {
+    key: 'aggregator', label: 'Aggregator',
+    role: ['Writes the answer the user sees.', 'The only agent that streams, and the only one that returns free text.'],
+    file: 'lib/agents/aggregator.ts',
+    slots: {
+      sys: 'Answer only from the provided information. NEVER INVENT medical facts.',
+      ctx: 'The SQL text and RAG text, wrapped in tags so the model can tell them apart.',
+      mod: 'gpt-4o (gpt-4’s 8K window silently truncated big patients), temperature 0.7.',
+      out: null,
+      his: 'The conversation so far, inside the user message.',
+    },
+    outNote: 'None. It streams prose to a human, so there’s nothing for code to parse.',
+    code: `return streamText({
+  [[mod|model: openaiProvider('gpt-4o'),]]
+  system: [[sys|'… NEVER INVENT OR INFER MEDICAL INFORMATION …']],
+  messages: [{
+    role: 'user',
+    content: \`
+      <user-question>\${query}</user-question>
+      <conversation-history>[[his|\${history}]]</conversation-history>
+      <retrieved-data>[[ctx|\${results}]]</retrieved-data>\`,
+  }],
+  [[mod|temperature: 0.7,]]
+});                <span class="cm">// [[out|no schema]]: streamed text, read by a person</span>`,
+  },
+];
+
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function renderCode(src) {
+  // Keep the hand-written <span class="cm"> comments; escape everything else.
+  return src
+    .split(/(<span class="cm">[\s\S]*?<\/span>)/)
+    .map((piece) => {
+      const isComment = piece.startsWith('<span class="cm">');
+      const body = isComment ? piece.slice(17, -7) : piece;
+      const html = esc(body).replace(/\[\[(\w+)\|([\s\S]*?)\]\]/g,
+        (_, part, text) => `<span class="p p-${part}" data-part="${part}">${text}</span>`);
+      return isComment ? `<span class="cm">${html}</span>` : html;
+    })
+    .join('');
+}
+
+let current = AGENTS[0];
+
+function highlight(part) {
+  document.querySelectorAll('[data-part]').forEach((el) => el.classList.toggle('hl', el.dataset.part === part));
+}
+
+function render() {
+  document.getElementById('tabs').innerHTML = AGENTS.map((a) =>
+    `<button class="${a === current ? 'on' : ''}" data-key="${a.key}">${a.label}</button>`).join('');
+  document.getElementById('role').innerHTML = `<b>${current.role[0]}</b> <span>${current.role[1]}</span>`;
+  document.getElementById('file').innerHTML = `<code>${current.file}</code>`;
+  document.getElementById('slots').innerHTML = SLOTS.map((s) => {
+    const v = current.slots[s.id];
+    const empty = v === null;
+    const text = empty ? (s.id === 'out' && current.outNote ? current.outNote : 'Empty. This agent doesn’t use one.') : esc(v);
+    return `<div class="slot s-${s.id}${empty ? ' none' : ''}" data-part="${s.id}">
+      <div class="k"><b>${s.name}</b><small>${s.q}</small></div>
+      <div class="v">${text}</div></div>`;
+  }).join('');
+  document.getElementById('code').innerHTML = renderCode(current.code);
+}
+
+document.getElementById('tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  current = AGENTS.find((a) => a.key === b.dataset.key);
+  render();
+});
+for (const id of ['slots', 'code']) {
+  const el = document.getElementById(id);
+  el.addEventListener('mouseover', (e) => { const p = e.target.closest('[data-part]'); highlight(p ? p.dataset.part : null); });
+  el.addEventListener('mouseleave', () => highlight(null));
+  el.addEventListener('click', (e) => { const p = e.target.closest('[data-part]'); if (p) highlight(p.dataset.part); });
+}
+
+render();
+</script>
+</body>
+</html>
