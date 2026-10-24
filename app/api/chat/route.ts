@@ -1,8 +1,9 @@
-import { openai, openaiProvider } from '@/lib/openai';
+import { openai } from '@/lib/openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { searchClinicalNotes } from '@/lib/vector-search';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { prisma } from '@/lib/prisma';
 
 const ChatRequestSchema = z.object({
 	query: z.string().min(1),
@@ -37,7 +38,144 @@ const selectorAgentSchema = z.object({
 					'The date of birth of the patient. In this format: YYYY-MM-DD',
 				),
 		})
-		.optional(),
+		.optional()
+		.nullable(),
+});
+
+const PRISMA_SCHEMA = `
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  DOCTOR
+  STAFF
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  @@map("users")
+}
+
+model Patient {
+  id            String    @id
+  firstName     String?
+  lastName      String?
+  gender        String?
+  birthDate     DateTime? @db.Date
+  deathDate     DateTime? // null = alive (823/1280 Coherent patients have a death date)
+  phone         String?
+  maritalStatus String?
+  race          String?
+  ethnicity     String?
+  city          String?
+  state         String?
+
+  conditions   Condition[]
+  observations Observation[]
+  medications  Medication[]
+  encounters   Encounter[]
+  notes        Note[]
+
+  @@index([lastName, firstName])
+  @@map("patients")
+}
+
+model Condition {
+  id             String    @id
+  patientId      String
+  code           String? // SNOMED code
+  display        String // e.g. "Type 2 Diabetes Mellitus"
+  clinicalStatus String? // active | resolved | inactive
+  onsetDate      DateTime?
+  abatementDate  DateTime?
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([display])
+  @@map("conditions")
+}
+
+model Observation {
+  id            String    @id
+  patientId     String
+  code          String? // LOINC code
+  display       String // e.g. "Hemoglobin A1c"
+  category      String? // laboratory | vital-signs | survey | ...
+  valueNumber   Float?
+  valueString   String?
+  unit          String?
+  effectiveDate DateTime?
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([code])
+  @@index([display])
+  @@map("observations")
+}
+
+model Medication {
+  id         String    @id
+  patientId  String
+  code       String? // RxNorm code
+  display    String // e.g. "Simvastatin 10 MG Oral Tablet"
+  status     String? // active | stopped | completed
+  authoredOn DateTime?
+  dosage     String?
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([display])
+  @@map("medications")
+}
+
+// Clinical notes live here too: Postgres is the system of record for ALL data.
+// Pinecone is a DERIVED index (note text + metadata) kept in sync from this table.
+model Note {
+  id        String    @id // DocumentReference id — also the vector id in Pinecone
+  patientId String
+  type      String? // e.g. "History and physical note"
+  date      DateTime?
+  content   String // the full note text (~450 chars avg); the source of truth
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("notes")
+}
+
+model Encounter {
+  id              String    @id
+  patientId       String
+  classCode       String? // HL7 v3 ActCode: AMB (ambulatory) | EMER (emergency) | IMP (inpatient)
+  type            String? // e.g. "Encounter for problem", "General examination of patient"
+  status          String? // finished | in-progress | planned | cancelled
+  startDate       DateTime?
+  endDate         DateTime?
+  serviceProvider String? // organization display, if present
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([classCode])
+  @@map("encounters")
+}
+`;
+
+const sqlSchema = z.object({
+	sql: z.string().describe('A single Postgres SELECT statement.'),
 });
 
 const fewShotExamples = [
@@ -68,7 +206,7 @@ const fewShotExamples = [
  *   3. call 0, 1, or 2 specialists, in parallel      (lib/agents/sql.ts, rag.ts)
  *   4. the aggregator streams the answer back        (lib/agents/aggregator.ts)
  *
- * Scheduling actions ride back to the UI in the X-Scheduling-Action header.
+ * Returns JSON: { message, schedulingAction? }. The optional action opens the calendar.
  */
 export async function POST(request: Request) {
 	try {
@@ -106,6 +244,41 @@ export async function POST(request: Request) {
 			});
 		}
 
+		if (response.output_parsed?.action === 'sql_search') {
+			// janky text-to-sql: whole prisma schema in, sql out, run it, summarize
+			// shortcut: relies on the SELECT-only DB role; add a validator in the safety exercise
+			const gen = await openai.responses.parse({
+				model: 'gpt-6-sol',
+				input: [
+					{
+						role: 'system',
+						content: `Write one Postgres SELECT for this Prisma schema. Use the @@map table names (e.g. "patients") and the column names exactly, quoted if camelCase. LIMIT 50.\n${PRISMA_SCHEMA}`,
+					},
+					{ role: 'user', content: query },
+				],
+				text: { format: zodTextFormat(sqlSchema, 'sql') },
+			});
+			const sql = sqlSchema.parse(gen.output_parsed).sql;
+			const rows = await prisma.$queryRawUnsafe(sql);
+
+			const summary = await openai.responses.create({
+				model: 'gpt-6-sol',
+				input: [
+					{
+						role: 'system',
+						content:
+							'Summarize these SQL results for a non-medical person. Concise and readable.',
+					},
+					{
+						role: 'user',
+						content: `question: ${query}\nsql: ${sql}\nrows: ${JSON.stringify(rows, (_, v) => (typeof v === 'bigint' ? Number(v) : v))}`,
+					},
+				],
+			});
+
+			return NextResponse.json({ message: summary.output_text });
+		}
+
 		if (response.output_parsed?.action === 'vector_search') {
 			const searchResults = await searchClinicalNotes(query);
 
@@ -121,7 +294,7 @@ export async function POST(request: Request) {
 				],
 			});
 
-			return NextResponse.json(summary.output_text);
+			return NextResponse.json({ message: summary.output_text });
 		}
 	} catch (error) {
 		if (error instanceof z.ZodError) {

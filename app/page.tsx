@@ -2,17 +2,25 @@
 
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
+import { z } from "zod";
+
+const SchedulingActionSchema = z.object({
+	patientName: z.string().min(1),
+	suggestedDate: z.iso.date(),
+	suggestedTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+	reason: z.string().nullish(),
+});
+
+type SchedulingAction = z.infer<typeof SchedulingActionSchema>;
+
+const ChatResponseSchema = z.object({
+	message: z.string(),
+	schedulingAction: SchedulingActionSchema.nullish(),
+});
 
 interface Message {
   role: "user" | "assistant";
   content: string;
-}
-
-interface SchedulingAction {
-  patientName: string;
-  suggestedDate: string;
-  suggestedTime: string;
-  reason?: string | null;
 }
 
 interface SchedulingState {
@@ -35,7 +43,7 @@ const EXAMPLE_QUERIES = [
 export default function Home() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [scheduling, setScheduling] = useState<SchedulingState | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -45,29 +53,14 @@ export default function Home() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, scheduling]);
-
-  // Parse scheduling action from message content
-  const parseSchedulingAction = (content: string): { text: string; action?: SchedulingAction } => {
-    const match = content.match(/<!-- SCHEDULING_ACTION (.+?) -->/);
-    if (match) {
-      try {
-        const action = JSON.parse(match[1]) as SchedulingAction;
-        const text = content.replace(/<!-- SCHEDULING_ACTION .+? -->/, "").trim();
-        return { text, action };
-      } catch {
-        return { text: content };
-      }
-    }
-    return { text: content };
-  };
+  }, [messages, scheduling, isLoading]);
 
   const sendQuery = async (userMessage: string) => {
-    if (!userMessage.trim() || isStreaming) return;
+    if (!userMessage.trim() || isLoading) return;
 
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
-    setIsStreaming(true);
+    setIsLoading(true);
     setScheduling(null);
 
     try {
@@ -82,43 +75,14 @@ export default function Home() {
 
       if (!response.ok) throw new Error("Failed to get response");
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let assistantMessage = "";
+      const { message, schedulingAction } = ChatResponseSchema.parse(await response.json());
+      setMessages((prev) => [...prev, { role: "assistant", content: message }]);
 
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        assistantMessage += chunk;
-
-        // Parse out scheduling action for display
-        const { text } = parseSchedulingAction(assistantMessage);
-
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          newMessages[newMessages.length - 1] = {
-            role: "assistant",
-            content: text,
-          };
-          return newMessages;
-        });
-      }
-
-      // Scheduling action rides in a response header (set by the route on the
-      // needsAppt short-circuit). Present => pop the confirm card.
-      const schedHeader = response.headers.get("X-Scheduling-Action");
-      if (schedHeader) {
-        const action = JSON.parse(
-          decodeURIComponent(schedHeader),
-        ) as SchedulingAction;
+      if (schedulingAction) {
         setScheduling({
-          action,
-          date: action.suggestedDate,
-          time: action.suggestedTime,
+          action: schedulingAction,
+          date: schedulingAction.suggestedDate,
+          time: schedulingAction.suggestedTime,
           isSubmitting: false,
         });
       }
@@ -132,7 +96,7 @@ export default function Home() {
         },
       ]);
     } finally {
-      setIsStreaming(false);
+      setIsLoading(false);
     }
   };
 
@@ -394,10 +358,11 @@ export default function Home() {
               </div>
             )}
 
-            {isStreaming && messages[messages.length - 1]?.content === "" && (
-              <div className="flex justify-start">
+            {isLoading && (
+              <div className="flex justify-start" role="status" aria-label="Preparing response">
                 <div className="bg-copilot-sidebar rounded-lg px-4 py-3">
-                  <div className="flex gap-1">
+                  <div className="flex items-center gap-1" aria-hidden="true">
+                    <span className="text-sm text-copilot-muted mr-2">Thinking</span>
                     <span className="w-2 h-2 bg-copilot-muted rounded-full animate-bounce" />
                     <span
                       className="w-2 h-2 bg-copilot-muted rounded-full animate-bounce"
@@ -426,11 +391,11 @@ export default function Home() {
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about patient records, or say 'schedule John Smith for next Tuesday'..."
               className="flex-1 px-4 py-3 bg-copilot-input border border-copilot-border rounded-lg text-copilot-text placeholder-copilot-muted focus:outline-none focus:border-copilot-accent"
-              disabled={isStreaming}
+              disabled={isLoading}
             />
             <button
               type="submit"
-              disabled={isStreaming || !input.trim()}
+              disabled={isLoading || !input.trim()}
               className="px-6 py-3 bg-copilot-accent text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <svg
