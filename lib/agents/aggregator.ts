@@ -9,45 +9,41 @@
  * the scheduling flow.
  */
 
-import { streamText } from 'ai';
-import { openaiProvider } from '../openai';
 import type { Message } from '../agent';
+import { openai } from '../openai';
 
-export function aggregate(
+export async function aggregate(
 	query: string,
 	history: Message[],
 	results: string,
-): ReturnType<typeof streamText> {
-	// text is the results ofr the previous agents
-	return streamText({
-		// gpt-4o, not gpt-4: gpt-4's 8K context window silently truncates
-		// patients with many notes — the answer just quietly gets worse for
-		// the patients who need it most. Check input size before you blame
-		// the prompt.
-		model: openaiProvider('gpt-4o'),
-		system: `
-		Use the information provided to answer the user's question.
-		NEVER INVENT OR INFER MEDICAL INFORMATION. ONLY ANSWER FROM THE PROVIDED INFORMATION.
-
-		If you do not have the information to answer the question, say so plainly and do not make up information.
-		`,
-		messages: [
+): Promise<string> {
+	const response = await openai.responses.create({
+		model: 'gpt-6-sol',
+		input: [
+			{
+				role: 'system',
+				content: 'Summarize the information provided.',
+			},
 			{
 				role: 'user',
 				content: `
 					<user-question>
-						Original user query: ${query}
+					Original user query: ${query}
 					</user-question>	
 
-					<conversation-history>${history.map((h) => `${h.role}: ${h.content}`).join('\n')}
+					<conversation-history>
+					${history.map((h) => `${h.role}: ${h.content}`).join('\n')}
 					</conversation-history>
 
-					<retrieved-data>	
+					<retrieved-data>
 					${results}
 					</retrieved-data>
-			`,
+
+					Format your response as a markdown list.
+				`,
 			},
 		],
-		temperature: 0.7,
 	});
+
+	return response.output_text;
 }

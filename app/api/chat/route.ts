@@ -3,7 +3,8 @@ import { zodTextFormat } from 'openai/helpers/zod';
 import { searchClinicalNotes } from '@/lib/vector-search';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { prisma } from '@/lib/prisma';
+import { runSql } from '@/lib/agents/sql';
+import { aggregate } from '@/lib/agents/aggregator';
 
 const ChatRequestSchema = z.object({
 	query: z.string().min(1),
@@ -17,17 +18,53 @@ const ChatRequestSchema = z.object({
 		.default([]),
 });
 
-const selectorAgentSchema = z.object({
-	action: z
-		.enum(['sql_search', 'vector_search', 'reject'])
-		.describe(
-			'The action to take. Vector search is preferred, but if the query is too complex, reject it.',
-		),
-	reason: z.string().min(5).describe('The reason you chose this action.'),
-	rejectionReason: z
+const AppointmentInfoSchema = z.object({
+	patientName: z
 		.string()
 		.min(1)
-		.describe('The reason you rejected the query.'),
+		.nullable()
+		.describe('Patient name, or null if unknown.'),
+	date: z.iso
+		.date()
+		.nullable()
+		.describe('Appointment date as YYYY-MM-DD, or null if unresolved.'),
+	time: z
+		.string()
+		.regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+		.nullable()
+		.describe(
+			'Appointment time as HH:MM in 24-hour format, or null if unknown. No seconds.',
+		),
+	reason: z
+		.string()
+		.nullable()
+		.describe('Appointment reason, or null if not provided.'),
+	userMessage: z
+		.string()
+		.min(1)
+		.describe(
+			'Ask for missing details, or invite the user to confirm when complete.',
+		),
+});
+
+// enable mutlippe actioms like sql && vector search
+const selectorAgentSchema = z.object({
+	actions: z
+		.array(
+			z.enum([
+				'sql_search',
+				'vector_search',
+				'reject',
+				'schedule_appointment',
+			]),
+		)
+		.describe(
+			`The actions to take. Vector search is preferred, but if the query is too complex, reject it.
+			Scheudle appointment possibly if the query is a scheduling request.
+			Only vector and sql search can be combined.
+			`,
+		),
+
 	personalInfo: z
 		.object({
 			name: z.string().min(1).describe('The FULL name of the patient.'),
@@ -42,158 +79,32 @@ const selectorAgentSchema = z.object({
 		.nullable(),
 });
 
-const PRISMA_SCHEMA = `
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-}
-
-enum Role {
-  DOCTOR
-  STAFF
-}
-
-model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  role         Role
-  createdAt    DateTime @default(now())
-
-  @@map("users")
-}
-
-model Patient {
-  id            String    @id
-  firstName     String?
-  lastName      String?
-  gender        String?
-  birthDate     DateTime? @db.Date
-  deathDate     DateTime? // null = alive (823/1280 Coherent patients have a death date)
-  phone         String?
-  maritalStatus String?
-  race          String?
-  ethnicity     String?
-  city          String?
-  state         String?
-
-  conditions   Condition[]
-  observations Observation[]
-  medications  Medication[]
-  encounters   Encounter[]
-  notes        Note[]
-
-  @@index([lastName, firstName])
-  @@map("patients")
-}
-
-model Condition {
-  id             String    @id
-  patientId      String
-  code           String? // SNOMED code
-  display        String // e.g. "Type 2 Diabetes Mellitus"
-  clinicalStatus String? // active | resolved | inactive
-  onsetDate      DateTime?
-  abatementDate  DateTime?
-
-  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
-
-  @@index([patientId])
-  @@index([display])
-  @@map("conditions")
-}
-
-model Observation {
-  id            String    @id
-  patientId     String
-  code          String? // LOINC code
-  display       String // e.g. "Hemoglobin A1c"
-  category      String? // laboratory | vital-signs | survey | ...
-  valueNumber   Float?
-  valueString   String?
-  unit          String?
-  effectiveDate DateTime?
-
-  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
-
-  @@index([patientId])
-  @@index([code])
-  @@index([display])
-  @@map("observations")
-}
-
-model Medication {
-  id         String    @id
-  patientId  String
-  code       String? // RxNorm code
-  display    String // e.g. "Simvastatin 10 MG Oral Tablet"
-  status     String? // active | stopped | completed
-  authoredOn DateTime?
-  dosage     String?
-
-  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
-
-  @@index([patientId])
-  @@index([display])
-  @@map("medications")
-}
-
-// Clinical notes live here too: Postgres is the system of record for ALL data.
-// Pinecone is a DERIVED index (note text + metadata) kept in sync from this table.
-model Note {
-  id        String    @id // DocumentReference id — also the vector id in Pinecone
-  patientId String
-  type      String? // e.g. "History and physical note"
-  date      DateTime?
-  content   String // the full note text (~450 chars avg); the source of truth
-
-  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
-
-  @@index([patientId])
-  @@map("notes")
-}
-
-model Encounter {
-  id              String    @id
-  patientId       String
-  classCode       String? // HL7 v3 ActCode: AMB (ambulatory) | EMER (emergency) | IMP (inpatient)
-  type            String? // e.g. "Encounter for problem", "General examination of patient"
-  status          String? // finished | in-progress | planned | cancelled
-  startDate       DateTime?
-  endDate         DateTime?
-  serviceProvider String? // organization display, if present
-
-  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
-
-  @@index([patientId])
-  @@index([classCode])
-  @@map("encounters")
-}
-`;
-
-const sqlSchema = z.object({
-	sql: z.string().describe('A single Postgres SELECT statement.'),
-});
-
 const fewShotExamples = [
 	{
 		query: 'What can you tell me about patient John Doe?',
-		action: 'vector_search',
+		actions: ['vector_search'],
 		reason: 'The query is a simple patient lookup, so we can use vector search.',
 	},
 	{
-		query: 'What is the capital of Germanu',
-		action: 'rejected',
+		query: 'What is the capital of Germany',
+		actions: ['reject'],
 		reason: 'Not a medical question.',
 	},
 	{
 		query: 'Give me medical advice',
-		action: 'rejected',
+		actions: ['reject'],
 		reason: 'We NEVER give medical advice.',
 	},
+	{
+		query: 'Schedule an appointment for patient John Doe on October 25th, 2026 at 10:00 AM',
+		actions: ['schedule_appointment'],
+		reason: 'The query is a simple appointment scheduling request, so we can use the schedule_appointment action.',
+	},
+	// {
+	// 	query: 'What can you tell me about smokers in this age group or ethnicity?',
+	// 	actions: ['sql_search', 'vector_search'],
+	// 	reason: 'The query is a simple patient lookup, so we can use sql search and vector search.',
+	// },
 ];
 
 /**
@@ -220,8 +131,8 @@ export async function POST(request: Request) {
 			input: [
 				{
 					role: 'system',
-					content:
-						'We are a medical facility. We need help looking up patient info. the query path to take',
+					content: `We are a medical facility. We need help looking up patient info. the query path to take
+						Generally use sql AND vector search together.`,
 				},
 				{
 					role: 'user',
@@ -238,63 +149,105 @@ export async function POST(request: Request) {
 		});
 
 		// if rejected then retrn the rejection reason
-		if (response.output_parsed?.action === 'reject') {
+		if (response.output_parsed?.actions.includes('reject')) {
 			return NextResponse.json({
-				message: response.output_parsed.rejectionReason,
+				message: "I'm sorry, I can't help with that.",
 			});
 		}
 
-		if (response.output_parsed?.action === 'sql_search') {
-			// janky text-to-sql: whole prisma schema in, sql out, run it, summarize
-			// shortcut: relies on the SELECT-only DB role; add a validator in the safety exercise
-			const gen = await openai.responses.parse({
-				model: 'gpt-6-sol',
-				input: [
-					{
-						role: 'system',
-						content: `Write one Postgres SELECT for this Prisma schema. Use the @@map table names (e.g. "patients") and the column names exactly, quoted if camelCase. LIMIT 50.\n${PRISMA_SCHEMA}`,
-					},
-					{ role: 'user', content: query },
-				],
-				text: { format: zodTextFormat(sqlSchema, 'sql') },
-			});
-			const sql = sqlSchema.parse(gen.output_parsed).sql;
-			const rows = await prisma.$queryRawUnsafe(sql);
+		if (response.output_parsed?.actions.includes('schedule_appointment')) {
+			// extract the patient name and date from the query OR ask them for the information
 
-			const summary = await openai.responses.create({
-				model: 'gpt-6-sol',
+			const response = await openai.responses.parse({
+				model: 'gpt-6-luna',
 				input: [
 					{
 						role: 'system',
-						content:
-							'Summarize these SQL results for a non-medical person. Concise and readable.',
+						content: `
+							Extract the patient name, date, time, and reason to schedule an appointment.
+							Today is ${new Date().toISOString().split('T')[0]}. Resolve relative dates such as Monday or tomorrow using today and the conversation.
+							Dates must be YYYY-MM-DD and times HH:MM (24-hour, no seconds).
+							Use null for missing or ambiguous fields, never placeholders such as "Not provided".
+							Ask for missing patient name, date, or time in userMessage. Reason is optional.
+							DO NOT MAKE UP INFORMATION. ONLY USE THE INFORMATION PROVIDED.
+							`,
 					},
 					{
 						role: 'user',
-						content: `question: ${query}\nsql: ${sql}\nrows: ${JSON.stringify(rows, (_, v) => (typeof v === 'bigint' ? Number(v) : v))}`,
+						content: `
+						Query: ${query}
+						Previous messages: ${JSON.stringify(messages.slice(-5))}
+						`,
 					},
 				],
+				text: {
+					format: zodTextFormat(
+						AppointmentInfoSchema,
+						'appointment_info',
+					),
+				},
 			});
 
-			return NextResponse.json({ message: summary.output_text });
+			const { patientName, date, time, reason, userMessage } =
+				AppointmentInfoSchema.parse(response.output_parsed);
+
+			return NextResponse.json({
+				message: userMessage,
+				schedulingAction:
+					patientName && date && time
+						? { patientName, date, time, reason }
+						: null,
+			});
 		}
 
-		if (response.output_parsed?.action === 'vector_search') {
-			const searchResults = await searchClinicalNotes(query);
+		// do we have both actions?
+		if (
+			response.output_parsed?.actions.includes('sql_search') &&
+			response.output_parsed?.actions.includes('vector_search')
+		) {
+			const [sqlSummary, vectorSummary] = await Promise.all([
+				runSql(query, messages),
+				searchClinicalNotes(query),
+			]);
 
-			const summary = await openai.responses.create({
-				model: 'gpt-6-sol',
-				input: [
-					{
-						role: 'system',
-						content:
-							'Summarize the following notes. Format names to not have the numbers and make it concise and readable to a non-medical person.',
-					},
-					{ role: 'user', content: searchResults },
-				],
+			console.log('sqlSummary', sqlSummary);
+			console.log('vectorSummary', vectorSummary);
+
+			const summary = await aggregate(
+				// you summarize the results
+				query,
+				messages,
+				`
+				SQL Summary: ${sqlSummary}\n\n
+				Vector Summary: ${vectorSummary}
+				`,
+			);
+
+			return NextResponse.json({
+				message: summary,
 			});
+		}
+		// if vector search then run the vector search
+		if (response.output_parsed?.actions.includes('vector_search')) {
+			const summary = await aggregate(
+				query,
+				messages,
+				`
+				Vector Summary: ${await searchClinicalNotes(query)}
+				`,
+			);
+			return NextResponse.json({ message: summary });
+		}
 
-			return NextResponse.json({ message: summary.output_text });
+		if (response.output_parsed?.actions.includes('sql_search')) {
+			const summary = await aggregate(
+				query,
+				messages,
+				`
+				SQL Summary: ${await runSql(query, messages)}
+				`,
+			);
+			return NextResponse.json({ message: summary });
 		}
 	} catch (error) {
 		if (error instanceof z.ZodError) {
