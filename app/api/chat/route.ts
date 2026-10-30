@@ -5,6 +5,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { runSql } from '@/lib/agents/sql';
 import { aggregate } from '@/lib/agents/aggregator';
+import { findPatientByName } from '@/lib/patients';
+import { resolveReferent, usesPronoun } from '@/lib/referent';
 
 const ChatRequestSchema = z.object({
 	query: z.string().min(1),
@@ -225,8 +227,26 @@ export async function POST(request: Request) {
 		}
 
 		if (response.output_parsed?.actions.includes('schedule_appointment')) {
-			// extract the patient name and date from the query OR ask them for the information
+			// Who is this about? A pronoun can point many turns back — further
+			// than the model can see, since it only gets the last 5 messages —
+			// so the referent is walked out in code before we ask the model
+			// anything. Ambiguous or unknown means we ask instead of guessing.
+			const resolution = await resolveReferent(messages, findPatientByName);
 
+			if (usesPronoun(query) && resolution.status !== 'resolved') {
+				return NextResponse.json({
+					message:
+						resolution.status === 'ambiguous'
+							? `Which patient did you mean — ${resolution.candidates.join(' or ')}?`
+							: 'Which patient would you like to schedule?',
+					schedulingAction: null,
+				});
+			}
+
+			const resolvedPatient =
+				resolution.status === 'resolved' ? resolution.patient : null;
+
+			// extract the patient name and date from the query OR ask them for the information
 			const response = await openai.responses.parse({
 				model: 'gpt-6-luna',
 				input: [
@@ -238,6 +258,7 @@ export async function POST(request: Request) {
 							Dates must be YYYY-MM-DD and times HH:MM (24-hour, no seconds).
 							Use null for missing or ambiguous fields, never placeholders such as "Not provided".
 							Ask for missing patient name, date, or time in userMessage. Reason is optional.
+							${resolvedPatient ? `The patient has already been resolved from the conversation: ${resolvedPatient.name}. Use exactly that name.` : 'The patient could not be resolved from the conversation: do not guess a name.'}
 							DO NOT MAKE UP INFORMATION. ONLY USE THE INFORMATION PROVIDED.
 							`,
 					},
@@ -260,11 +281,15 @@ export async function POST(request: Request) {
 			const { patientName, date, time, reason, userMessage } =
 				AppointmentInfoSchema.parse(response.output_parsed);
 
+			// Identity comes from the resolver, not the model: if code decided
+			// who "her" is, that answer wins over the extracted string.
+			const finalName = resolvedPatient?.name ?? patientName;
+
 			return NextResponse.json({
 				message: userMessage,
 				schedulingAction:
-					patientName && date && time
-						? { patientName, date, time, reason }
+					finalName && date && time
+						? { patientName: finalName, date, time, reason }
 						: null,
 			});
 		}

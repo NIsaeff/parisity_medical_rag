@@ -6,6 +6,17 @@ vi.mock('@/lib/openai', () => ({ openai: { responses: { parse } } }));
 vi.mock('@/lib/vector-search', () => ({ searchClinicalNotes: vi.fn() }));
 vi.mock('@/lib/agents/sql', () => ({ runSql: vi.fn() }));
 vi.mock('@/lib/agents/aggregator', () => ({ aggregate: vi.fn() }));
+vi.mock('@/lib/patients', () => ({
+	findPatientByName: vi.fn(async (term: string) => {
+		const known = [
+			{ firstName: 'Cassie', lastName: 'Heidenreich', birthDate: new Date('1936-12-23') },
+			{ firstName: 'Abe', lastName: 'Frami', birthDate: new Date('1950-04-02') },
+		];
+		return known.filter((p) =>
+			`${p.firstName} ${p.lastName}`.toLowerCase().includes(term.toLowerCase()),
+		);
+	}),
+}));
 import { POST } from './route';
 
 const appointment = {
@@ -50,4 +61,51 @@ it('rejects the reported free-form date and times containing seconds', async () 
 	} finally {
 		error.mockRestore();
 	}
+});
+
+async function scheduleWithPronoun(
+	history: { role: 'user' | 'assistant'; content: string }[],
+	extracted: Record<string, unknown> = appointment,
+) {
+	parse.mockResolvedValueOnce({ output_parsed: { actions: ['schedule_appointment'] } });
+	parse.mockResolvedValueOnce({ output_parsed: extracted });
+	const response = await POST(new Request('http://localhost/api/chat', {
+		method: 'POST',
+		body: JSON.stringify({ query: 'lets schedule a meeting with her for monday at 1:15 pm', messages: history }),
+	}));
+	assert(response);
+	return response.json();
+}
+
+it('resolves a pronoun to the single patient named earlier in the conversation', async () => {
+	const body = await scheduleWithPronoun([
+		{ role: 'assistant', content: 'Cassie Heidenreich (born 1936-12-23) had hypertension.' },
+		{ role: 'user', content: 'how is that patient doing?' },
+	]);
+
+	// The extraction step echoed the pronoun; the resolver's name wins.
+	expect(body.schedulingAction).toMatchObject({ patientName: 'Cassie Heidenreich' });
+});
+
+it('asks which patient when the conversation names several', async () => {
+	const body = await scheduleWithPronoun([
+		{ role: 'assistant', content: 'Abe Frami and Cassie Heidenreich both have hypertension.' },
+	]);
+
+	expect(body).toEqual({
+		message: 'Which patient did you mean — Abe Frami or Cassie Heidenreich?',
+		schedulingAction: null,
+	});
+});
+
+it('asks for a patient when the pronoun has no antecedent', async () => {
+	const body = await scheduleWithPronoun([
+		{ role: 'user', content: 'how many patients have hypertension?' },
+		{ role: 'assistant', content: 'Twelve patients have hypertension.' },
+	]);
+
+	expect(body).toEqual({
+		message: 'Which patient would you like to schedule?',
+		schedulingAction: null,
+	});
 });
