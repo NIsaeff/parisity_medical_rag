@@ -13,12 +13,13 @@ export async function POST(request: Request) {
 		// The gate here is the human-in-the-loop confirmation in the UI, not a
 		// login — a scheduling card only posts after the user confirms it.
 		const body = await request.json();
-		const { patientName, dateTime, notes } = body;
+		const { patientName, dateTime, timeZone, patientEmail, notes } = body;
 
 		if (!isCalConfigured()) {
 			return NextResponse.json(
 				{
-					error: 'Calendar integration not configured. Set CAL_API_KEY and CAL_EVENT_TYPE_ID.',
+					error:
+						'Calendar integration not configured. Set CAL_API_KEY and a real CAL_EVENT_TYPE_ID.',
 				},
 				{ status: 503 },
 			);
@@ -27,6 +28,10 @@ export async function POST(request: Request) {
 		const result = await scheduleAppointment({
 			patientName,
 			dateTime,
+			// Optional: an IANA zone from the client. Falls back to CAL_TIME_ZONE
+			// (Cal v2 needs one — the UI sends local wall-clock time).
+			timeZone,
+			patientEmail,
 			notes,
 		});
 
