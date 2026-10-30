@@ -59,24 +59,35 @@ const selectorAgentSchema = z.object({
 			]),
 		)
 		.describe(
-			`The actions to take. Vector search is preferred, but if the query is too complex, reject it.
-			Scheudle appointment possibly if the query is a scheduling request.
-			Only vector and sql search can be combined.
+			`The actions to take. Vector search is preferred. Only sql and vector search can be combined.
+			A booking/scheduling request — "schedule", "book", "reschedule", "cancel an appointment" — is ALWAYS schedule_appointment, even when the patient is only referred to by a pronoun or the date is relative. Never reject a scheduling request.
+			Reject only what this assistant cannot do: non-medical questions and medical advice.
 			`,
 		),
 
-	personalInfo: z
+	patientResolution: z
 		.object({
-			name: z.string().min(1).describe('The FULL name of the patient.'),
+			status: z
+				.enum(['resolved', 'ambiguous', 'unknown'])
+				.describe(
+					'resolved = one patient is named in the query or in the previous messages. ambiguous = several are named. unknown = the pronoun has no antecedent anywhere.',
+				),
+			referent: z
+				.string()
+				.nullable()
+				.describe('The referring word used, e.g. "her". Null when the query names the patient.'),
+			name: z
+				.string()
+				.nullable()
+				.describe('The resolved FULL patient name, or null. NEVER invent or guess one.'),
 			dob: z
 				.string()
-				.min(1)
-				.describe(
-					'The date of birth of the patient. In this format: YYYY-MM-DD',
-				),
+				.nullable()
+				.describe('YYYY-MM-DD when known, else null. Never guess.'),
 		})
-		.optional()
-		.nullable(),
+		.describe(
+			'Who the request is about. A pronoun that refers to the patient discussed in the previous messages is a normal patient reference, not a reason to reject.',
+		),
 });
 
 const fewShotExamples = [
@@ -98,7 +109,62 @@ const fewShotExamples = [
 	{
 		query: 'Schedule an appointment for patient John Doe on October 25th, 2026 at 10:00 AM',
 		actions: ['schedule_appointment'],
-		reason: 'The query is a simple appointment scheduling request, so we can use the schedule_appointment action.',
+		patientResolution: {
+			status: 'resolved',
+			referent: null,
+			name: 'John Doe',
+			dob: null,
+		},
+		reason:
+			'The query is a simple appointment scheduling request, so we can use the schedule_appointment action.',
+	},
+	{
+		query: 'lets schedule a meeting with her for monday at 1:15 pm pst',
+		actions: ['schedule_appointment'],
+		patientResolution: {
+			status: 'resolved',
+			referent: 'her',
+			name: 'Cassie Heidenreich',
+			dob: '1936-12-23',
+		},
+		reason:
+			'Scheduling request using a pronoun. The previous messages name exactly ONE patient, so the referent is definitive: schedule for that patient. A pronoun is never a reason to reject.',
+	},
+	{
+		query: 'book her in for friday at 3pm',
+		actions: ['schedule_appointment'],
+		patientResolution: {
+			status: 'ambiguous',
+			referent: 'her',
+			name: null,
+			dob: null,
+		},
+		reason:
+			'Scheduling request using a pronoun, but the previous messages name SEVERAL patients. Do not choose one: status ambiguous, name null, and the appointment step asks.',
+	},
+	{
+		query: 'schedule an appointment with her tomorrow',
+		actions: ['schedule_appointment'],
+		patientResolution: {
+			status: 'unknown',
+			referent: 'her',
+			name: null,
+			dob: null,
+		},
+		reason:
+			'Pronoun with no patient named anywhere in the conversation. Status unknown, name null: ask which patient. Never invent one.',
+	},
+	{
+		query: 'What medications is she on?',
+		actions: ['vector_search'],
+		patientResolution: {
+			status: 'resolved',
+			referent: 'she',
+			name: 'Cassie Heidenreich',
+			dob: '1936-12-23',
+		},
+		reason:
+			'Pronouns are normal references to the patient from the previous messages, so resolve them from history.',
 	},
 	// {
 	// 	query: 'What can you tell me about smokers in this age group or ethnicity?',
@@ -131,8 +197,11 @@ export async function POST(request: Request) {
 			input: [
 				{
 					role: 'system',
-					content: `We are a medical facility. We need help looking up patient info. the query path to take
-						Generally use sql AND vector search together.`,
+					content: `We are a medical facility. Staff ask us to look up patient information and to book appointments.
+						Choose the retrieval paths, and say who the request is about.
+						Scheduling: any request to book, schedule, reschedule or cancel an appointment is schedule_appointment — never reject it, even when the patient is a pronoun ("her", "him", "that patient") or the date is relative ("Monday", "tomorrow").
+						Pronouns refer to the patient discussed in the previous messages: if exactly one patient is named there, that is the referent; if several are named, the status is ambiguous; if none are, it is unknown. Never invent a patient.
+						Reject only what we cannot do: non-medical questions, and requests for medical advice.`,
 				},
 				{
 					role: 'user',
