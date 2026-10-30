@@ -40,6 +40,10 @@ const FiltersSchema = z.object({
 		.int()
 		.nullable()
 		.describe('Maximum age in years, if stated.'),
+	state: z
+		.string()
+		.nullable()
+		.describe('US state as stored in the data, e.g. "MA".'),
 	city: z.string().nullable(),
 	alive: z
 		.boolean()
@@ -66,6 +70,7 @@ export function buildWhere(f: Filters): Prisma.PatientWhereInput {
 		...(conds.length &&
 			(f.conditionLogic === 'any' ? { OR: conds } : { AND: conds })),
 		...(f.gender && { gender: f.gender }),
+		...(f.state && { state: { equals: f.state, mode: 'insensitive' } }),
 		...(f.city && { city: { equals: f.city, mode: 'insensitive' } }),
 		...(f.alive != null && { deathDate: f.alive ? null : { not: null } }),
 		...((f.minAge != null || f.maxAge != null) && {
@@ -83,23 +88,29 @@ export async function runSql(
 	query: string, // tell me about patient wiht a cold under 82
 	history: Message[] = [],
 ): Promise<string> {
-	const [conditionRows] = await Promise.all([
+	const [conditionRows, stateRows] = await Promise.all([
 		prisma.condition.findMany({
 			distinct: ['display'],
 			select: { display: true },
 			orderBy: { display: 'asc' },
 		}),
+		prisma.patient.findMany({
+			distinct: ['state'],
+			select: { state: true },
+		}),
 	]);
 	const known = conditionRows.map((c) => c.display);
+	const states = stateRows.map((s) => s.state).filter((s): s is string => !!s);
 
 	const response = await openai.responses.parse({
 		model: 'gpt-6-luna',
 		input: [
 			{
 				role: 'system',
-				content: `Extract patient filters from the question. 
+				content: `Extract patient filters from the question.
 				Only set a filter the question actually asks for.\n\n
-				Conditions that exist in the data:\n${known.join('\n')}\n\n`,
+				Conditions that exist in the data:\n${known.join('\n')}\n\n
+				States as stored (use these exact values, e.g. "MA" not "Massachusetts"): ${states.join(', ')}`,
 			},
 			...history.map((m) => ({ role: m.role, content: m.content })),
 			{ role: 'user', content: query },
@@ -115,7 +126,8 @@ export async function runSql(
 	const filters = {
 		...parsed,
 		conditions: parsed.conditions.filter((c) => known.includes(c)),
-	}; // filter out the conditions that are not in the data
+		state: parsed.state && states.includes(parsed.state) ? parsed.state : null,
+	}; // filter out the conditions and states that are not in the data
 
 	const where = buildWhere(filters); // function NO AI
 
