@@ -249,6 +249,10 @@ export async function POST(request: Request) {
 				});
 			}
 
+			// How the referent was found matters when a booking looks wrong:
+			// exact/stem = code, adjudicated/extracted = the model proposed it.
+			console.log('[referent]', JSON.stringify(resolution));
+
 			const resolvedPatient =
 				resolution.status === 'resolved' ? resolution.patient : null;
 
