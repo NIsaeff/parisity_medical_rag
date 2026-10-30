@@ -11,12 +11,16 @@ vi.mock('@/lib/patients', () => ({
 		const known = [
 			{ firstName: 'Cassie', lastName: 'Heidenreich', birthDate: new Date('1936-12-23') },
 			{ firstName: 'Abe', lastName: 'Frami', birthDate: new Date('1950-04-02') },
+			{ firstName: 'Brady', lastName: 'Hickle', birthDate: new Date('1934-08-14') },
 		];
 		return known.filter((p) =>
 			`${p.firstName} ${p.lastName}`.toLowerCase().includes(term.toLowerCase()),
 		);
 	}),
 }));
+// Keep the tests offline: the adjudicator is the only extra LLM call, and it
+// is mocked to decline so the deterministic paths are what get exercised.
+vi.mock('@/lib/referent-llm', () => ({ adjudicateReferent: vi.fn(async () => ({ name: null })) }));
 import { POST } from './route';
 
 const appointment = {
@@ -108,4 +112,13 @@ it('asks for a patient when the pronoun has no antecedent', async () => {
 		message: 'Which patient would you like to schedule?',
 		schedulingAction: null,
 	});
+});
+
+it('resolves a Synthea note name ("Brady998") to the real patient row', async () => {
+	const body = await scheduleWithPronoun([
+		{ role: 'assistant', content: 'Brady998 is a 61-year-old man with diabetes.' },
+	]);
+
+	// The note says Brady998; the patient table says Brady Hickle.
+	expect(body.schedulingAction).toMatchObject({ patientName: 'Brady Hickle' });
 });

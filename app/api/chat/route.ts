@@ -7,6 +7,7 @@ import { runSql } from '@/lib/agents/sql';
 import { aggregate } from '@/lib/agents/aggregator';
 import { findPatientByName } from '@/lib/patients';
 import { resolveReferent, usesPronoun } from '@/lib/referent';
+import { adjudicateReferent } from '@/lib/referent-llm';
 
 const ChatRequestSchema = z.object({
 	query: z.string().min(1),
@@ -231,7 +232,12 @@ export async function POST(request: Request) {
 			// than the model can see, since it only gets the last 5 messages —
 			// so the referent is walked out in code before we ask the model
 			// anything. Ambiguous or unknown means we ask instead of guessing.
-			const resolution = await resolveReferent(messages, findPatientByName);
+			const resolution = await resolveReferent({
+				history: messages,
+				query,
+				lookup: findPatientByName,
+				adjudicate: adjudicateReferent,
+			});
 
 			if (usesPronoun(query) && resolution.status !== 'resolved') {
 				return NextResponse.json({
