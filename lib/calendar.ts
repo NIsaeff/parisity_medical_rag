@@ -26,10 +26,12 @@
  *   - `cal-api-version` is REQUIRED; omit it and Cal silently serves an older
  *     version of the endpoint with a different body shape
  *   - `start` must be UTC, but the UI sends local wall-clock time — see toUtcIso
- *   - v2 requires attendee.name + attendee.timeZone; email is optional
+ *   - v2 requires attendee.name + attendee.timeZone; email and phone are optional
  *
  * Docs: https://cal.com/docs/api-reference/v2/bookings/create-a-booking
  */
+
+import { toE164 } from './contact';
 
 const CAL_API_BASE = 'https://api.cal.com/v2';
 
@@ -50,6 +52,7 @@ export interface ScheduleRequest {
   dateTime: string; // ISO 8601. Local wall-clock ("2026-11-02T13:15") or UTC
   timeZone?: string; // IANA zone for wall-clock input; falls back to CAL_TIME_ZONE
   patientEmail?: string;
+  patientPhone?: string; // used when no email is known — see the attendee below
   notes?: string | null;
 }
 
@@ -168,7 +171,10 @@ export async function scheduleAppointment(
   }
 
   const timeZone = request.timeZone || DEFAULT_TIME_ZONE;
+  // Email if the conversation supplied one (or CAL_ATTENDEE_EMAIL is set as an
+  // override), otherwise the phone on record: Cal v2 accepts either.
   const email = request.patientEmail || process.env.CAL_ATTENDEE_EMAIL;
+  const phoneNumber = request.patientPhone ? toE164(request.patientPhone) : undefined;
 
   let start: string;
   try {
@@ -195,6 +201,10 @@ export async function scheduleAppointment(
           name: request.patientName,
           timeZone,
           ...(email && { email }),
+          // Patients here have a phone but no email, so this is the fallback:
+          // Cal accepts either, and only requires a phone when the event type
+          // has an SMS workflow.
+          ...(phoneNumber && { phoneNumber }),
         },
         // Metadata values are capped at 500 chars by Cal.
         ...(request.notes && { metadata: { notes: request.notes.slice(0, 500) } }),
@@ -204,12 +214,21 @@ export async function scheduleAppointment(
     const body = await response.json().catch(() => null);
 
     if (!response.ok || (body as { status?: string } | null)?.status === 'error') {
-      return {
-        success: false,
-        error:
-          calErrorMessage(body) ??
-          `Cal.com rejected the booking (HTTP ${response.status}).`,
-      };
+      const message =
+        calErrorMessage(body) ??
+        `Cal.com rejected the booking (HTTP ${response.status}).`;
+
+      // The one rejection worth translating: this dataset has no patient
+      // emails, so an event type that demands one fails here. Say why.
+      if (/email/i.test(message) && !email) {
+        return {
+          success: false,
+          error:
+            'Cal.com requires an attendee email for this event type, but the patient record has none. Add an email in the chat or set CAL_ATTENDEE_EMAIL.',
+        };
+      }
+
+      return { success: false, error: message };
     }
 
     const booking = (body as { data?: Record<string, unknown> } | null)?.data ?? {};

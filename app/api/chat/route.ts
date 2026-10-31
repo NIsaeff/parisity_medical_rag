@@ -8,6 +8,7 @@ import { aggregate } from '@/lib/agents/aggregator';
 import { findPatientByName } from '@/lib/patients';
 import { resolveReferent, usesPronoun } from '@/lib/referent';
 import { adjudicateReferent } from '@/lib/referent-llm';
+import { emailFrom } from '@/lib/contact';
 
 const ChatRequestSchema = z.object({
 	query: z.string().min(1),
@@ -27,6 +28,13 @@ const AppointmentInfoSchema = z.object({
 		.min(1)
 		.nullable()
 		.describe('Patient name, or null if unknown.'),
+	patientEmail: z
+		.string()
+		.regex(/^[\w.+-]+@[\w-]+\.[A-Za-z]{2,}$/)
+		.nullish()
+		.describe(
+			'Attendee email, ONLY if the user typed one in this request or the conversation. Otherwise null. Never invent an address.',
+		),
 	date: z.iso
 		.date()
 		.nullable()
@@ -268,6 +276,7 @@ export async function POST(request: Request) {
 							Dates must be YYYY-MM-DD and times HH:MM (24-hour, no seconds).
 							Use null for missing or ambiguous fields, never placeholders such as "Not provided".
 							Ask for missing patient name, date, or time in userMessage. Reason is optional.
+							If the user typed an attendee email, copy it verbatim into patientEmail; otherwise null. Never invent an address.
 							${resolvedPatient ? `The patient has already been resolved from the conversation: ${resolvedPatient.name}. Use exactly that name.` : 'The patient could not be resolved from the conversation: do not guess a name.'}
 							DO NOT MAKE UP INFORMATION. ONLY USE THE INFORMATION PROVIDED.
 							`,
@@ -288,18 +297,34 @@ export async function POST(request: Request) {
 				},
 			});
 
-			const { patientName, date, time, reason, userMessage } =
+			const { patientName, patientEmail, date, time, reason, userMessage } =
 				AppointmentInfoSchema.parse(response.output_parsed);
 
 			// Identity comes from the resolver, not the model: if code decided
 			// who "her" is, that answer wins over the extracted string.
 			const finalName = resolvedPatient?.name ?? patientName;
 
+			// A typed email is more reliable than an extracted one, and the
+			// record itself has none (the Patient table has a phone, no email).
+			const email = emailFrom(query, messages) ?? patientEmail ?? null;
+
+			// Cal takes an email or a phone; with no email, the phone on record
+			// is the fallback contact for the attendee.
+			const [patient] = finalName ? await findPatientByName(finalName) : [];
+			const phone = patient?.phone ?? null;
+
 			return NextResponse.json({
 				message: userMessage,
 				schedulingAction:
 					finalName && date && time
-						? { patientName: finalName, date, time, reason }
+						? {
+								patientName: finalName,
+								date,
+								time,
+								reason,
+								patientEmail: email,
+								patientPhone: phone,
+							}
 						: null,
 			});
 		}

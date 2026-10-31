@@ -3,12 +3,17 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { z } from 'zod';
+import { maskPhone } from '@/lib/contact';
 
 const SchedulingActionSchema = z.object({
 	patientName: z.string().min(1),
 	date: z.iso.date(),
 	time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
 	reason: z.string().nullish(),
+	// Contact for the booking. Patients have a phone but no email in this
+	// dataset, so the card says which one is being used.
+	patientEmail: z.string().nullish(),
+	patientPhone: z.string().nullish(),
 });
 
 type SchedulingAction = z.infer<typeof SchedulingActionSchema>;
@@ -129,6 +134,8 @@ export default function Home() {
 				body: JSON.stringify({
 					patientName: scheduling.action.patientName,
 					dateTime,
+					patientEmail: scheduling.action.patientEmail,
+					patientPhone: scheduling.action.patientPhone,
 					notes: scheduling.action.reason,
 				}),
 			});
@@ -304,6 +311,29 @@ export default function Home() {
 											{scheduling.action.patientName}
 										</strong>
 									</p>
+
+									{/* This dataset has no patient emails — only phones. Say
+									    which contact the booking will use, and mask the
+									    number so it does not sit in plain sight. */}
+									{!scheduling.action.patientEmail && (
+										<p className='text-xs text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded px-3 py-2 mb-3'>
+											{scheduling.action.patientPhone ? (
+												<>
+													No email on file — the booking will use the phone
+													number on record ending{' '}
+													<strong>
+														{maskPhone(scheduling.action.patientPhone)}
+													</strong>
+													.
+												</>
+											) : (
+												<>
+													No email or phone on file — Cal.com may reject this
+													booking.
+												</>
+											)}
+										</p>
+									)}
 
 									<div className='grid grid-cols-2 gap-3 mb-4'>
 										<div>

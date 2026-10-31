@@ -13,7 +13,8 @@ export async function POST(request: Request) {
 		// The gate here is the human-in-the-loop confirmation in the UI, not a
 		// login — a scheduling card only posts after the user confirms it.
 		const body = await request.json();
-		const { patientName, dateTime, timeZone, patientEmail, notes } = body;
+		const { patientName, dateTime, timeZone, patientEmail, patientPhone, notes } =
+			body;
 
 		if (!isCalConfigured()) {
 			return NextResponse.json(
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
 			// (Cal v2 needs one — the UI sends local wall-clock time).
 			timeZone,
 			patientEmail,
+			// Patients have a phone but no email in this dataset; Cal takes
+			// either, so the phone is the fallback contact.
+			patientPhone,
 			notes,
 		});
 

@@ -9,9 +9,10 @@ vi.mock('@/lib/agents/aggregator', () => ({ aggregate: vi.fn() }));
 vi.mock('@/lib/patients', () => ({
 	findPatientByName: vi.fn(async (term: string) => {
 		const known = [
-			{ firstName: 'Cassie', lastName: 'Heidenreich', birthDate: new Date('1936-12-23') },
-			{ firstName: 'Abe', lastName: 'Frami', birthDate: new Date('1950-04-02') },
-			{ firstName: 'Brady', lastName: 'Hickle', birthDate: new Date('1934-08-14') },
+			{ firstName: 'Cassie', lastName: 'Heidenreich', birthDate: new Date('1936-12-23'), phone: '555-100-2000' },
+			{ firstName: 'Abe', lastName: 'Frami', birthDate: new Date('1950-04-02'), phone: '555-300-4000' },
+			{ firstName: 'Brady', lastName: 'Hickle', birthDate: new Date('1934-08-14'), phone: '555-428-8876' },
+			{ firstName: 'Bret', lastName: 'Collier', birthDate: new Date('1970-01-01'), phone: '555-428-8876' },
 		];
 		return known.filter((p) =>
 			`${p.firstName} ${p.lastName}`.toLowerCase().includes(term.toLowerCase()),
@@ -25,6 +26,7 @@ import { POST } from './route';
 
 const appointment = {
 	patientName: 'Bret Collier', date: '2026-10-26', time: '09:00', reason: null,
+	patientEmail: null,
 	userMessage: 'Please confirm the appointment.',
 };
 
@@ -52,8 +54,31 @@ it('returns a calendar action for complete details without requiring a reason', 
 	const response = await schedule(appointment);
 	expect(await response.json()).toEqual({
 		message: appointment.userMessage,
-		schedulingAction: { patientName: appointment.patientName, date: appointment.date, time: appointment.time, reason: null },
+		schedulingAction: {
+			patientName: appointment.patientName,
+			date: appointment.date,
+			time: appointment.time,
+			reason: null,
+			// No email typed, and the mock patient rows carry a phone.
+			patientEmail: null,
+			patientPhone: '555-428-8876',
+		},
 	});
+});
+
+it('carries a patient email typed in the chat through to the booking', async () => {
+	parse.mockResolvedValueOnce({ output_parsed: { actions: ['schedule_appointment'] } });
+	parse.mockResolvedValueOnce({ output_parsed: appointment });
+	const response = await POST(new Request('http://localhost/api/chat', {
+		method: 'POST',
+		body: JSON.stringify({
+			query: 'Schedule Bret Collier on Monday, use bob@example.com',
+		}),
+	}));
+	assert(response);
+
+	const body = await response.json();
+	expect(body.schedulingAction.patientEmail).toBe('bob@example.com');
 });
 
 it('rejects the reported free-form date and times containing seconds', async () => {
