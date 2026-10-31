@@ -49,4 +49,41 @@ describe('POST /api/schedule', () => {
     expect(res.status).toBe(503);
     expect(scheduleAppointment).not.toHaveBeenCalled();
   });
+
+  it('passes the phone on record through to the calendar', async () => {
+    await POST(scheduleRequest({ patientName: 'Abe Frami', dateTime: '2026-07-10T14:00:00Z', patientPhone: '555-428-8876' }));
+
+    expect(scheduleAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({ patientPhone: '555-428-8876' }),
+    );
+  });
+
+  it('says which contact was used when Cal rejected the typed email', async () => {
+    vi.mocked(scheduleAppointment).mockResolvedValueOnce({
+      success: true,
+      bookingId: 'bk_123',
+      contact: 'email',
+      droppedEmail: 'bob@example.com',
+    });
+
+    const res = await POST(scheduleRequest());
+    const body = await res.json();
+
+    expect(body.message).toBe(
+      'Appointment scheduled for Abe Frami. Cal.com rejected bob@example.com, so the confirmation will use the clinic email address.',
+    );
+  });
+
+  it('mentions the phone when the booking fell back to it', async () => {
+    vi.mocked(scheduleAppointment).mockResolvedValueOnce({
+      success: true,
+      bookingId: 'bk_123',
+      contact: 'phone',
+      droppedEmail: 'bob@example.com',
+    });
+
+    const body = await (await POST(scheduleRequest())).json();
+
+    expect(body.message).toMatch(/phone number on record/);
+  });
 });

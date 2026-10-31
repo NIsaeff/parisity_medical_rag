@@ -61,9 +61,19 @@ export async function POST(request: Request) {
 
 		return NextResponse.json({
 			success: true,
-			message: `Appointment scheduled for ${patientName}`,
+			// Say what actually happened: if Cal rejected the email we supplied,
+			// the booking still went ahead on the phone and the user should know
+			// their address was dropped.
+			message: result.droppedEmail
+				? `Appointment scheduled for ${patientName}. Cal.com rejected ${result.droppedEmail}, so the confirmation will use ${
+						result.contact === 'phone'
+							? 'the phone number on record'
+							: 'the clinic email address'
+					}.`
+				: `Appointment scheduled for ${patientName}.`,
 			bookingId: result.bookingId,
 			bookingUrl: result.bookingUrl,
+			contact: result.contact,
 			confirmationCall,
 		});
 	} catch (error) {

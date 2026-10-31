@@ -60,6 +60,10 @@ export interface ScheduleResult {
   success: boolean;
   bookingId?: string;
   bookingUrl?: string;
+  /** Which contact Cal accepted for the attendee. */
+  contact?: 'email' | 'phone';
+  /** Set when Cal rejected the supplied email and the booking went ahead on the phone. */
+  droppedEmail?: string;
   error?: string;
 }
 
@@ -146,6 +150,67 @@ function calErrorMessage(body: unknown): string | undefined {
   return undefined;
 }
 
+type PostOutcome =
+  | { ok: true; booking: Record<string, unknown> }
+  | { ok: false; status: number; message: string };
+
+/**
+ * Cal's field-validation errors are not prose: when the event type marks email
+ * as required and the attendee has none, it answers with
+ * `responses - {email}error_required_field, `.
+ */
+function isEmailRequired(message: string): boolean {
+  return /\{email\}|email[^.]{0,40}required|required[^.]{0,40}email/i.test(message);
+}
+
+const EMAIL_REQUIRED_HINT =
+  'Cal.com requires an attendee email for this event type, and the patient record has none. Add an email in the chat, or set CAL_ATTENDEE_EMAIL to an address that can receive mail.';
+
+const EMAIL_REJECTED_HINT =
+  'rejected every contact we could offer for this booking. Check the event type settings and CAL_ATTENDEE_EMAIL.';
+
+/** One POST /v2/bookings attempt. Errors carry Cal's own wording, unattributed. */
+async function postBooking(body: Record<string, unknown>): Promise<PostOutcome> {
+  const response = await fetch(`${CAL_API_BASE}/bookings`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.CAL_API_KEY}`,
+      'cal-api-version': CAL_API_VERSION,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const parsed = await response.json().catch(() => null);
+
+  if (!response.ok || (parsed as { status?: string } | null)?.status === 'error') {
+    return {
+      ok: false,
+      status: response.status,
+      message:
+        calErrorMessage(parsed) ?? `rejected the booking (HTTP ${response.status})`,
+    };
+  }
+
+  return {
+    ok: true,
+    booking: (parsed as { data?: Record<string, unknown> } | null)?.data ?? {},
+  };
+}
+
+/** v2 identifies a booking by uid (id is the numeric internal key). There is no
+ *  bookingUrl in the response — the public page is /booking/<uid>. */
+function toResult(booking: Record<string, unknown>, contact?: 'email' | 'phone'): ScheduleResult {
+  const uid = typeof booking.uid === 'string' ? booking.uid : undefined;
+
+  return {
+    success: true,
+    bookingId: uid ?? (booking.id != null ? String(booking.id) : undefined),
+    ...(uid && { bookingUrl: `https://cal.com/booking/${uid}` }),
+    ...(contact && { contact }),
+  };
+}
+
 /**
  * Schedule an appointment via Cal.com API v2.
  *
@@ -187,61 +252,91 @@ export async function scheduleAppointment(
   }
 
   try {
-    const response = await fetch(`${CAL_API_BASE}/bookings`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.CAL_API_KEY}`,
-        'cal-api-version': CAL_API_VERSION,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        start,
-        eventTypeId: Number(process.env.CAL_EVENT_TYPE_ID),
-        attendee: {
-          name: request.patientName,
-          timeZone,
-          ...(email && { email }),
-          // Patients here have a phone but no email, so this is the fallback:
-          // Cal accepts either, and only requires a phone when the event type
-          // has an SMS workflow.
-          ...(phoneNumber && { phoneNumber }),
-        },
-        // Metadata values are capped at 500 chars by Cal.
-        ...(request.notes && { metadata: { notes: request.notes.slice(0, 500) } }),
-      }),
-    });
+    const attendee = {
+      name: request.patientName,
+      timeZone,
+      ...(email && { email }),
+      // Patients here have a phone but no email, so this is the fallback:
+      // Cal accepts either, and only requires a phone when the event type
+      // has an SMS workflow.
+      ...(phoneNumber && { phoneNumber }),
+    };
 
-    const body = await response.json().catch(() => null);
+    const payload = {
+      start,
+      eventTypeId: Number(process.env.CAL_EVENT_TYPE_ID),
+      attendee,
+      // Metadata values are capped at 500 chars by Cal.
+      ...(request.notes && { metadata: { notes: request.notes.slice(0, 500) } }),
+    };
 
-    if (!response.ok || (body as { status?: string } | null)?.status === 'error') {
-      const message =
-        calErrorMessage(body) ??
-        `Cal.com rejected the booking (HTTP ${response.status}).`;
+    const first = await postBooking(payload);
 
-      // The one rejection worth translating: this dataset has no patient
-      // emails, so an event type that demands one fails here. Say why.
-      if (/email/i.test(message) && !email) {
-        return {
-          success: false,
-          error:
-            'Cal.com requires an attendee email for this event type, but the patient record has none. Add an email in the chat or set CAL_ATTENDEE_EMAIL.',
-        };
-      }
-
-      return { success: false, error: message };
+    if (first.ok) {
+      return toResult(first.booking, email ? 'email' : phoneNumber ? 'phone' : undefined);
     }
 
-    const booking = (body as { data?: Record<string, unknown> } | null)?.data ?? {};
+    // The event type's booking form requires an email we do not have.
+    if (isEmailRequired(first.message)) {
+      return { success: false, error: EMAIL_REQUIRED_HINT };
+    }
 
-    // v2 identifies a booking by uid (id is the numeric internal key). There is
-    // no bookingUrl in the response — the public page is /booking/<uid>.
-    const uid = typeof booking.uid === 'string' ? booking.uid : undefined;
+    // Cal validates that an attendee address can receive mail, so a typo or a
+    // reserved domain (example.com) rejects the whole booking. Fall back in
+    // order of preference rather than making the user debug a domain they did
+    // not choose: the clinic address first (deliverable), then phone-only.
+    if (email && /email/i.test(first.message)) {
+      const clinic = process.env.CAL_ATTENDEE_EMAIL;
+      const fallbacks: { attendee: Record<string, string>; contact: 'email' | 'phone' }[] = [
+        ...(clinic && clinic !== email
+          ? [
+              {
+                attendee: {
+                  name: request.patientName,
+                  timeZone,
+                  email: clinic,
+                  ...(phoneNumber && { phoneNumber }),
+                },
+                contact: 'email' as const,
+              },
+            ]
+          : []),
+        ...(phoneNumber
+          ? [
+              {
+                attendee: { name: request.patientName, timeZone, phoneNumber },
+                contact: 'phone' as const,
+              },
+            ]
+          : []),
+      ];
 
-    return {
-      success: true,
-      bookingId: uid ?? (booking.id != null ? String(booking.id) : undefined),
-      ...(uid && { bookingUrl: `https://cal.com/booking/${uid}` }),
-    };
+      for (const fallback of fallbacks) {
+        const retry = await postBooking({ ...payload, attendee: fallback.attendee });
+
+        if (retry.ok) {
+          return {
+            ...toResult(retry.booking, fallback.contact),
+            droppedEmail: email,
+          };
+        }
+
+        // Dropping the address is not enough when the event type demands one.
+        if (isEmailRequired(retry.message)) {
+          return { success: false, error: EMAIL_REQUIRED_HINT };
+        }
+      }
+
+      if (fallbacks.length > 0) {
+        return {
+          success: false,
+          error: `Cal.com ${EMAIL_REJECTED_HINT}`,
+        };
+      }
+    }
+
+    // Attribute the provider's wording: it is not our sentence.
+    return { success: false, error: `Cal.com ${first.message}` };
   } catch (error) {
     return {
       success: false,

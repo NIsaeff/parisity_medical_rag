@@ -156,12 +156,16 @@ export default function Home() {
 			);
 
 			if (response.ok) {
-				// Add confirmation message
+				// Add confirmation message. The API's wording carries detail the
+				// client cannot know — e.g. whether the address the user typed was
+				// rejected and which contact the booking actually used.
 				setMessages((prev) => [
 					...prev,
 					{
 						role: 'assistant',
-						content: `Appointment scheduled for **${scheduling.action.patientName}** on ${scheduling.date} at ${scheduling.time}.`,
+						content:
+							result.message ??
+							`Appointment scheduled for **${scheduling.action.patientName}** on ${scheduling.date} at ${scheduling.time}.`,
 					},
 				]);
 			}
