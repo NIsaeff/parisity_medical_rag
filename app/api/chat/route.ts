@@ -105,16 +105,54 @@ const fewShotExamples = [
 	{
 		query: 'What can you tell me about patient John Doe?',
 		actions: ['vector_search'],
+		patientResolution: {
+			status: 'resolved',
+			referent: null,
+			name: 'John Doe',
+			dob: null,
+		},
 		reason: 'The query is a simple patient lookup, so we can use vector search.',
+	},
+	// --- SQL only: counts, filters and structured facts. No notes needed. ---
+	{
+		query: 'How many patients have diabetes?',
+		actions: ['sql_search'],
+		patientResolution: { status: 'unknown', referent: null, name: null, dob: null },
+		reason:
+			'A count over structured condition data. The answer is a number, so SQL alone is enough — the notes would only add noise.',
+	},
+	{
+		query: 'Which patients have had a stroke?',
+		actions: ['sql_search'],
+		patientResolution: { status: 'unknown', referent: null, name: null, dob: null },
+		reason:
+			'Listing patients by a recorded condition is a structured lookup; vector search is not needed to name them.',
+	},
+	// --- SQL + notes: filter on structure, then read the narrative. ---
+	{
+		query: 'Which smokers have notes mentioning shortness of breath?',
+		actions: ['sql_search', 'vector_search'],
+		patientResolution: { status: 'unknown', referent: null, name: null, dob: null },
+		reason:
+			'Two different questions in one: "smokers" is a structured filter (SQL), "notes mentioning shortness of breath" is free text (vector). Use both.',
+	},
+	{
+		query: 'For patients with hypertension, what do the notes say about diet and exercise?',
+		actions: ['sql_search', 'vector_search'],
+		patientResolution: { status: 'unknown', referent: null, name: null, dob: null },
+		reason:
+			'The cohort comes from structured data (hypertension) and the answer comes from the notes, so sql and vector search are combined.',
 	},
 	{
 		query: 'What is the capital of Germany',
 		actions: ['reject'],
+		patientResolution: { status: 'unknown', referent: null, name: null, dob: null },
 		reason: 'Not a medical question.',
 	},
 	{
 		query: 'Give me medical advice',
 		actions: ['reject'],
+		patientResolution: { status: 'unknown', referent: null, name: null, dob: null },
 		reason: 'We NEVER give medical advice.',
 	},
 	{
@@ -177,11 +215,6 @@ const fewShotExamples = [
 		reason:
 			'Pronouns are normal references to the patient from the previous messages, so resolve them from history.',
 	},
-	// {
-	// 	query: 'What can you tell me about smokers in this age group or ethnicity?',
-	// 	actions: ['sql_search', 'vector_search'],
-	// 	reason: 'The query is a simple patient lookup, so we can use sql search and vector search.',
-	// },
 ];
 
 /**
